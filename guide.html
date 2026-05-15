@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+</head>
+<body class="p-3">
+
+  <!-- 🔹 主導覽畫面 -->
+<div class="guide-wrapper position-relative d-inline-block">
+  <img id="guideImage" src="" class="system-bg border rounded" style="width:100%; height:auto; display:block;">
+  
+    <div id="titleOverlayWrapper" style="
+      position:absolute;
+      top:0; left:0;
+      width:100%;
+      z-index:10;
+      pointer-events:auto;
+    ">
+    <img id="titleOverlayImg"
+        src="https://lh3.googleusercontent.com/d/19IDYNG1byLHC9so5U9z4FqU04LWfG-5k=w1920?authuser=0"
+        alt="導覽標題"
+        style="width:100%; height:auto; display:block; border-bottom-right-radius:8px; pointer-events:none;">
+    </div>
+
+  <div id="hotspotContainer"></div>
+</div>
+
+  <style>
+    .system-bg {
+      border: 2px solid #ccc;
+      border-radius: 10px;
+    }
+
+    .hotspot {
+      position: absolute;
+      border: 2px dashed rgba(255, 165, 0, 0.6);
+      border-radius: 4px;
+      background: rgba(255, 165, 0, 0.1);
+      transition: all .2s;
+      z-index: 1;
+      cursor: default;
+    }
+
+    .hotspot:hover {
+      background: rgba(255, 165, 0, 0.25);
+    }
+
+    /* Tooltip 統一樣式 */
+    .tippy-box[data-theme~='light-border'] {
+      background-color: #fff;
+      color: #000;
+      border: 2px solid #ffa500;
+      border-radius: 10px;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+      font-size: 1rem;
+      line-height: 1.6;
+      padding: 0.75rem 1rem;
+    }
+
+    // === 表單相關 ===
+    .form-wrapper {
+      text-align: center;
+      background: rgba(255,255,255,0.98);
+    }
+
+    .form-wrapper img {
+      display: block;
+      margin: 0 auto;
+    }
+
+    .form-wrapper .hotspot {
+      box-sizing: border-box;
+    }
+
+    /* ============================================================
+      🎨 Tooltip 內容強化樣式（統一於所有導覽與表單）
+    ============================================================ */
+    .tippy-box[data-theme~='light-border'] .fw-bold {
+      font-size: 20px;
+      font-weight: 900;
+      color: #000;
+    }
+
+    .tippy-box[data-theme~='light-border'] .small {
+      font-size: 16px !important;   /* 你希望的大小 */
+      line-height: 1.6;
+    }
+
+    .tippy-box[data-theme~='light-border'] .text-muted {
+      color: #555 !important;            /* 稍微加深說明文字 */
+    }
+
+    .tippy-box[data-theme~='light-border'] .text-warning {
+      color: #ffa500 !important;         /* 確保標籤顯示為亮橘色 */
+    }
+
+    .hotspot {
+      cursor: pointer !important;
+    }
+
+    /* 嵌入導覽本身不應是可點擊區塊 */
+    .hotspot[data-type="嵌入導覽"],
+    .hotspot[data-type="崁入網頁"] {
+      cursor: default !important;
+    }
+
+    .hotspot[data-type="崁入網頁"] * {
+      max-width: 100% !important;
+      box-sizing: border-box;
+    }
+
+    .hotspot[data-type="崁入網頁"] table {
+      width: 100% !important;
+    }
+
+  </style>
+
+  <script>
+    // ============================
+    // 🧭 導覽模組變數
+    // ============================
+    let guideCache = {};
+    let currentPage = "";
+
+    // ============================
+    // 🚀 初始化導覽畫面
+    // ============================
+    function initGuide(guideData) {
+      //console.log("📘 initGuide() 啟動");
+      guideCache = guideData.pages;
+      window.guideCache = guideCache;
+
+      // 🔶 預載所有頁面圖片（背景下載）
+      for (const pageUrl of Object.keys(guideCache)) {
+        preloadPageImage(pageUrl);
+      }
+
+      const firstPage = guideData.mainPage || Object.keys(guideCache)[0];
+      switchPage(firstPage);
+    }
+
+    // ============================
+    // 📸 切換導覽頁面
+    // ============================
+    // 🧡 圖片快取池（建議放在檔案最上方）
+    window.pageImageCache = {};
+    window.pageImageLoading = {};
+
+    function preloadPageImage(url) {
+      if (window.pageImageCache[url]) return Promise.resolve(window.pageImageCache[url]);
+      if (window.pageImageLoading[url]) return window.pageImageLoading[url];
+
+      window.pageImageLoading[url] = new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+          window.pageImageCache[url] = img;
+          resolve(img);
+        };
+        img.src = url;
+      });
+
+      return window.pageImageLoading[url];
+    }
+
+
+    /* ============================================================
+      ⚡ 加速版 switchPage：使用快取圖片、不重載、不等 onload
+      ＋ 修復：熱區跟不上、殘留上一頁 → 已整合處理
+    ============================================================ */
+    async function switchPage(url) {
+      if (!url) return;
+      // 🔥 切換頁面前清除該頁的快取（避免殘影）
+      window.hotspotDomCache[url] = null;
+
+      currentPage = url;
+      window.currentPage = url;
+      const img = document.getElementById("guideImage");
+
+      // 關閉 tooltip
+      if (typeof closeAllTippies === "function") closeAllTippies();
+      if (typeof hideSingleTooltip === "function") hideSingleTooltip();
+
+      // 預載圖片（快取圖立即 resolve）
+      const cachedImg = await preloadPageImage(url);
+
+      // 🔥 改成使用快取圖片，不再觸發 onload
+      img.src = cachedImg.src;
+
+      // 🔥 等 layout 完成後再渲染（避免上一頁尺寸造成錯位）
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollToTopOfGuide();
+
+          if (guideCache[url]) renderHotspots(guideCache[url]);
+          else console.warn("⚠️ 無對應頁面資料：" + url);
+
+          // 重新掛全域標題熱區
+          if (window.guideCache) {
+            const titleOverlay = document.getElementById("titleOverlayImg");
+            if (titleOverlay && titleOverlay.parentElement) {
+
+              // 清舊的
+              const oldGlobals = titleOverlay.parentElement.querySelectorAll('.hotspot[data-type="開啟全域表單"]');
+              oldGlobals.forEach(el => el.remove());
+
+              // 掛新的
+              for (const [pageUrl, list] of Object.entries(window.guideCache)) {
+                list.forEach(item => {
+                  if (item.type === "開啟全域表單") {
+                    const div = document.createElement("div");
+                    div.className = "hotspot";
+                    div.dataset.type = item.type;
+                    Object.assign(div.style, {
+                      top: (item.y * titleOverlay.clientHeight) + "px",
+                      left: (item.x * titleOverlay.clientWidth) + "px",
+                      width: (item.w * titleOverlay.clientWidth) + "px",
+                      height: (item.h * titleOverlay.clientHeight) + "px",
+                      zIndex: 11
+                    });
+                    div.addEventListener("click", () => openGlobalFormOverlay(item));
+                    titleOverlay.parentElement.appendChild(div);
+                  }
+                });
+              }
+            }
+          }
+        });
+      });
+    }
+
+
+
+    /* ============================================================
+      🔹 渲染熱區（含快取）
+    ============================================================ */
+    window.hotspotDomCache = {}; // { pageUrl : [ { item, div } ] }
+
+
+    function renderHotspots(list) {
+      const pageUrl = currentPage;
+      const c = document.getElementById("hotspotContainer");
+      const img = document.getElementById("guideImage");
+      const title = document.getElementById("titleOverlayImg");
+
+      const imgW = img.clientWidth;
+      const imgH = img.clientHeight;
+
+      // 🔥 若圖片 layout 還沒完成 → 延後跑（避免錯位）
+      if (!imgW || !imgH || imgW < 20 || imgH < 20) {
+        requestAnimationFrame(() => renderHotspots(list));
+        return;
+      }
+
+      /* ======================================================
+        ⚡ 若該頁已有快取 → 只更新位置（超快）
+      ====================================================== */
+      if (window.hotspotDomCache[pageUrl]) {
+        window.hotspotDomCache[pageUrl].forEach(({ item, div }) => {
+          div.style.top = (item.y * imgH) + "px";
+          div.style.left = (item.x * imgW) + "px";
+          div.style.width = (item.w * imgW) + "px";
+          div.style.height = (item.h * imgH) + "px";
+        });
+
+        updateOverlaySizes();
+      }
+
+      /* ======================================================
+        🟦 第一次渲染 → 建立 DOM（完整保留你的原邏輯）
+      ====================================================== */
+      c.innerHTML = "";
+      const domList = [];
+
+      const titleParent = title?.parentElement;
+      if (titleParent) {
+        const oldGlobals = titleParent.querySelectorAll('.hotspot[data-type="開啟全域表單"]');
+        oldGlobals.forEach(el => el.remove());
+      }
+
+      list.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "hotspot";
+        div.dataset.type = item.type;
+
+        Object.assign(div.style, {
+          top: (item.y * imgH) + "px",
+          left: (item.x * imgW) + "px",
+          width: (item.w * imgW) + "px",
+          height: (item.h * imgH) + "px"
+        });
+
+        const safeId = (item.pagePath + "_" + item.title);
+        div.dataset.hotspotId = safeId;
+
+
+        // === 顯示功能 ===
+        if (item.type === "顯示功能") {
+          const tagHTML = buildTagHTML(item.tags);
+
+          const html = `
+            <div class="p-2">
+              <div class="fw-bold mb-2 text-center">${item.title}</div>
+              <div class="small text-muted text-start">${item.text}</div>
+              ${tagHTML}
+            </div>`;
+
+          if (typeof bindHotspotTooltip === "function") {
+            bindHotspotTooltip(div, item);
+          } else {
+            createTippyTooltip(div, html); // fallback（現在 html 一定有定義）
+          }
+        }
+
+
+        // === 切換頁面 ===
+        else if (item.type === "切換頁面") {
+          div.addEventListener("click", () => {
+            scrollToTopOfGuide();
+            switchPage(item.targetUrl);
+          });
+        }
+
+        // === 下拉選單 ===
+        else if (item.type === "下拉選單") {
+          div.addEventListener("click", e => {
+            e.stopPropagation();
+            showSelectPopup(item, div);
+          });
+        }
+
+        // === 嵌入導覽 ===
+        else if (item.type === "嵌入導覽") {
+          renderEmbeddedGuide(item, div);
+        }
+
+        // === 開啟表單 ===
+        else if (item.type === "開啟表單") {
+          div.addEventListener("click", () => openFormOverlay(item));
+        }
+
+        // === 關閉表單 ===
+        else if (item.type === "關閉表單") {
+          div.addEventListener("click", () => closeFormOverlay(item));
+        }
+
+        else if (item.type === "崁入網頁") {
+          renderEmbeddedWeb(item, div);
+        }
+
+        // === 開啟全域表單（標題列）===
+        else if (item.type === "開啟全域表單") {
+          if (titleParent) titleParent.appendChild(div);
+          else c.appendChild(div);
+
+          div.style.zIndex = 11;
+          div.addEventListener("click", () => openGlobalFormOverlay(item));
+
+          domList.push({ item, div });
+          return;
+        }
+
+        else if (item.type === "切換全域頁面") {
+          // ⭐ 不在主圖畫任何東西，只由標題列負責
+          return;
+        }
+
+        c.appendChild(div);
+        domList.push({ item, div });
+      });
+
+      // ⭐ 第一次渲染 → 建立快取
+      window.hotspotDomCache[pageUrl] = domList;
+
+      // =====================================================
+      // 🟦 重新渲染嵌入導覽（避免縮放後子導覽不更新）
+      // =====================================================
+      document.querySelectorAll('.hotspot[data-type="嵌入導覽"]').forEach(div => {
+        const id = div.dataset.hotspotId;
+        const pageUrl = currentPage;
+        const item = guideCache[pageUrl]?.find(it => {
+          const safeId = (it.pagePath + "_" + it.title);
+          return safeId === id;
+        });
+        if (item) renderEmbeddedGuide(item, div);
+      });
+
+      updateOverlaySizes();
+    }
+
+    // === 崁入網頁 ===
+    function renderEmbeddedWeb(item, div) {
+
+      // 先清空
+      div.innerHTML = "";
+
+      // 外層框（固定大小、禁止水平卷軸、自動垂直）
+      const frame = document.createElement("div");
+      Object.assign(frame.style, {
+        position: "absolute",
+        inset: 0,
+        overflowX: "hidden",   // ❗ 禁止水平捲動
+        overflowY: "auto",     // ✔ 垂直捲動
+        background: "#fff",
+        padding: "8px 12px",
+        borderRadius: "8px",
+        boxSizing: "border-box",
+      });
+
+      // 內容容器（HTML allow）
+      const content = document.createElement("div");
+      content.style.width = "100%";
+      content.style.boxSizing = "border-box";
+
+      // 套用顯示文字（allow HTML）
+      content.innerHTML = item.text || "";
+
+      // 插入
+      frame.appendChild(content);
+      div.appendChild(frame);
+
+      // ⭐ 一旦崁入網頁被點擊，紀錄它是「上一個熱區」來源
+      div.addEventListener("click", e => {
+        window._lastHotspotId = div.dataset.hotspotId;
+        // console.log("📌 [崁入網頁] 設定來源熱區 =", window._lastHotspotId);
+      });
+
+    }
+
+    /* ============================================================
+      🧩 統一控制標題列與全域表單尺寸對齊
+    ============================================================ */
+    function updateOverlaySizes() {
+      const img = document.getElementById("guideImage");
+      if (!img || !img.naturalWidth) return;
+
+      // === 標題列（#titleOverlayImg） ===
+      const titleOverlay = document.getElementById("titleOverlayImg");
+      if (titleOverlay) {
+        titleOverlay.style.width = img.clientWidth + "px";
+        titleOverlay.style.height = "auto";
+        titleOverlay.style.top = "0px";
+        titleOverlay.style.left = "0px";
+        titleOverlay.style.transform = "scale(1)"; // 不要再縮放
+      }
+
+      // === 全域表單（#globalFormOverlay） ===
+      const globalOverlay = document.getElementById("globalFormOverlay");
+      if (globalOverlay && globalFormActive) {
+        updateGlobalFormOverlayPosition();
+      }
+      // ✅ 新增這段：主圖更新時，確保標題列全域熱區跟著重掛
+      attachGlobalHeaderHotspots();
+    }
+
+    /* === 🖥️ 縮放時重新對齊 === */
+    window.addEventListener("resize", updateOverlaySizes);
+
+    /* === 🖼️ 主圖載入完成時也同步對齊 === */
+    document.getElementById("guideImage").addEventListener("load", updateOverlaySizes);
+
+
+    // ============================
+    // 🔝 回到導覽畫面頂端
+    // 功能：
+    // 1. 優先滾動右側導覽內容區（#content）
+    // 2. 若找不到則嘗試滾動導覽容器（.guide-wrapper）
+    // 3. 最後才使用 window.scrollTo() 作為保險機制
+    // ============================
+    function scrollToTopOfGuide() {
+      // 嘗試抓到右側導覽內容容器
+      const content = document.querySelector('#content');
+      const guideWrapper = document.querySelector('.guide-wrapper');
+
+      // 如果右側容器有滾動，就對它滾動；否則 fallback 到 window
+      if (content && content.scrollTo) {
+        content.scrollTo({ top: 0, behavior: 'smooth' });
+      } else if (guideWrapper && guideWrapper.scrollTo) {
+        guideWrapper.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+
+
+    // ============================
+    // 📏 視窗縮放自動重繪
+    // ============================
+    window.addEventListener('resize', () => {
+      if (currentPage && guideCache[currentPage]) {
+        renderHotspots(guideCache[currentPage]);
+      }
+    });
+
+    /* ============================================================
+      🧭 全域表單控制模組（以目標畫面網址圖片為內容）
+      ------------------------------------------------------------
+      - 類型：開啟全域表單
+      - 內容：item.targetUrl 指定圖片
+      - 對齊：主圖左上角偏移 (X=0, Y=48px)
+      - 同步：隨主圖縮放等比例更新
+      - 視覺：無邊界、無陰影、貼齊主圖
+    ============================================================ */
+
+    let globalFormActive = false;
+
+    /* === 🟢 開啟全域表單 === */
+    /* ============================================================
+      🧡 全域表單圖片快取
+    ============================================================ */
+    if (!window.globalFormImageCache) window.globalFormImageCache = {};
+    if (!window.globalFormImageLoading) window.globalFormImageLoading = {};
+
+    function preloadGlobalFormImage(url) {
+      if (window.globalFormImageCache[url]) return Promise.resolve(window.globalFormImageCache[url]);
+      if (window.globalFormImageLoading[url]) return window.globalFormImageLoading[url];
+
+      window.globalFormImageLoading[url] = new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+          window.globalFormImageCache[url] = img;
+          resolve(img);
+        };
+        img.src = url;
+      });
+
+      return window.globalFormImageLoading[url];
+    }
+
+
+    /* ============================================================
+      🟢 開啟全域表單（快取版，不重載圖片）
+    ============================================================ */
+    async function openGlobalFormOverlay(item) {
+      const img = document.getElementById("guideImage");
+      if (!img) return;
+
+      // 若已有 → 移除
+      closeGlobalFormOverlay();
+
+      /* ============================================================
+        🟧 先快取表單圖片（與子導覽相同邏輯）
+      ============================================================ */
+      const cachedFormImg = await preloadGlobalFormImage(item.targetUrl);
+
+      /* ============================================================
+        🧱 外層 overlay 容器
+      ============================================================ */
+      const overlay = document.createElement("div");
+      overlay.id = "globalFormOverlay";
+      Object.assign(overlay.style, {
+        position: "absolute",
+        top: "52px",
+        left: "0",
+        zIndex: 5,
+        transformOrigin: "top left",
+        display: "none",
+        margin: "0",
+        padding: "0",
+      });
+
+      /* ============================================================
+        🖼️ 表單圖片（使用快取，不使用 ?v=）
+      ============================================================ */
+      const formImg = document.createElement("img");
+      formImg.src = cachedFormImg.src;
+      formImg.alt = item.title || "全域表單";
+      Object.assign(formImg.style, {
+        width: "100%",
+        height: "auto",
+        display: "block",
+        userSelect: "none",
+        margin: "0",
+        padding: "0",
+        border: "none",
+        boxShadow: "none",
+        background: "transparent",
+        borderRadius: "0",
+      });
+
+      overlay.appendChild(formImg);
+
+      /* ============================================================
+        ❌ 關閉按鈕
+      ============================================================ */
+      const closeBtn = document.createElement("div");
+      closeBtn.textContent = "✕";
+      Object.assign(closeBtn.style, {
+        position: "absolute",
+        bottom: "8px",
+        right: "12px",
+        color: "#fff",
+        background: "rgba(0,0,0,0.6)",
+        borderRadius: "50%",
+        width: "28px",
+        height: "28px",
+        textAlign: "center",
+        lineHeight: "28px",
+        cursor: "pointer",
+        fontWeight: "bold",
+        fontSize: "16px",
+        zIndex: 10,
+      });
+      closeBtn.onclick = closeGlobalFormOverlay;
+      overlay.appendChild(closeBtn);
+
+      /* ============================================================
+        🧱 加入 DOM
+      ============================================================ */
+      document.querySelector(".guide-wrapper").appendChild(overlay);
+      overlay.style.display = "block";
+      globalFormActive = true;
+
+      /* ============================================================
+        🟧 等 layout 完成後 → 對齊 + 渲染熱區
+      ============================================================ */
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          updateGlobalFormOverlayPosition();
+
+          // 關閉底層熱區互動
+          document.querySelectorAll("#hotspotContainer .hotspot").forEach(h => {
+            h.style.pointerEvents = "none";
+            h.style.opacity = "0.3";
+          });
+
+          const content = document.getElementById("content");
+          if (content) content.style.overflowY = "hidden";
+
+          /* ============================================================
+            🧩 全域表單熱區（使用快取，不重建）
+          ============================================================ */
+          const formHotspots = window.guideCache?.[item.targetUrl];
+          if (!formHotspots || !formHotspots.length) return;
+
+          const hotspotLayer = document.createElement("div");
+          hotspotLayer.id = "globalFormHotspots";
+          Object.assign(hotspotLayer.style, {
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            zIndex: 7,
+            pointerEvents: "auto"
+          });
+          overlay.appendChild(hotspotLayer);
+
+          // 渲染熱區（百分比定位）
+          formHotspots.forEach(it => {
+            const d = document.createElement("div");
+            d.className = "hotspot";
+            d.dataset.type = it.type;
+
+            Object.assign(d.style, {
+              position: "absolute",
+              top: (it.y * 100) + "%",
+              left: (it.x * 100) + "%",
+              width: (it.w * 100) + "%",
+              height: (it.h * 100) + "%",
+              zIndex: 8
+            });
+
+            const safeId = (it.pagePath + "_" + it.title);
+            d.dataset.hotspotId = safeId;
+
+            if (it.type === "切換頁面") {
+              d.addEventListener("click", () => {
+                closeGlobalFormOverlay();
+                switchPage(it.targetUrl);
+                scrollToTopOfGuide();
+              });
+            }
+            else if (it.type === "關閉表單") {
+              d.addEventListener("click", closeGlobalFormOverlay);
+            }
+
+            hotspotLayer.appendChild(d);
+          });
+        });
+      });
+    }
+
+
+    /* === 🔧 更新表單位置與縮放 === */
+    function updateGlobalFormOverlayPosition() {
+      const img = document.getElementById("guideImage");
+      const overlay = document.getElementById("globalFormOverlay");
+      if (!img || !overlay || !img.naturalWidth) return;
+
+      const scale = img.clientWidth / img.naturalWidth;
+      const offsetX = 0 * scale;
+      const offsetY = 56 * scale;
+
+      overlay.style.left = offsetX + "px";
+      overlay.style.top = offsetY + "px";
+      overlay.style.width = img.clientWidth + "px";
+      overlay.style.transform = "scale(1)"; // 不再整體縮放
+    }
+
+
+    /* === 🔴 關閉全域表單 === */
+    function closeGlobalFormOverlay() {
+      const overlay = document.getElementById("globalFormOverlay");
+      if (overlay) overlay.remove();
+      globalFormActive = false;
+
+      // 🔓 恢復底層互動
+      document.querySelectorAll("#hotspotContainer .hotspot").forEach(h => {
+        h.style.pointerEvents = "auto";
+        h.style.opacity = "1";
+      });
+
+      // 🔓 恢復捲動
+      const content = document.getElementById("content");
+      if (content) content.style.overflowY = "scroll";
+    }
+
+    /* ============================================================
+      ⚡ 快取版全域表單熱區：只建立一次，不重建
+    ============================================================ */
+    window.globalHeaderCache = null;
+
+    function attachGlobalHeaderHotspots() {
+      if (!window.guideCache) return;
+
+      const wrapper = document.getElementById("titleOverlayWrapper");
+      const titleOverlay = document.getElementById("titleOverlayImg");
+      const img = document.getElementById("guideImage");
+      if (!wrapper || !titleOverlay || !img) return;
+
+      // ⭐ 使用「實際縮放後的圖片尺寸」作為基準
+      const displayWidth = titleOverlay.clientWidth;
+      const displayHeight = titleOverlay.clientHeight;
+
+      // 若圖片還沒 layout 出來 → 延後再執行
+      if (!displayWidth || !displayHeight) {
+        requestAnimationFrame(attachGlobalHeaderHotspots);
+        return;
+      }
+
+      // 🧹 清除舊的全域熱區（只清這兩種類型）
+      const oldGlobals = wrapper.querySelectorAll(`
+        .hotspot[data-type="開啟全域表單"],
+        .hotspot[data-type="切換全域頁面"]
+      `);
+      oldGlobals.forEach(el => el.remove());
+
+      // 🧩 重新建立 Header 專用熱區
+      for (const [pageUrl, list] of Object.entries(window.guideCache)) {
+        list.forEach(item => {
+
+          // ⭐ 標題列只處理以下兩種：
+          if (item.type !== "開啟全域表單" && item.type !== "切換全域頁面") return;
+
+          const div = document.createElement("div");
+          div.className = "hotspot";
+          div.dataset.type = item.type;
+
+          Object.assign(div.style, {
+            position: "absolute",
+            top: (item.y * displayHeight) + "px",
+            left: (item.x * displayWidth) + "px",
+            width: (item.w * displayWidth) + "px",
+            height: (item.h * displayHeight) + "px",
+            zIndex: 11,
+            pointerEvents: "auto"
+          });
+
+          // ⭐ 功能分流
+          if (item.type === "開啟全域表單") {
+            div.addEventListener("click", () => openGlobalFormOverlay(item));
+          }
+
+          else if (item.type === "切換全域頁面") {
+            div.addEventListener("click", () => {
+              closeGlobalFormOverlay?.();  // 若有表單先關閉
+              switchPage(item.targetUrl);
+              scrollToTopOfGuide();
+            });
+          }
+
+          wrapper.appendChild(div);
+        });
+      }
+    }
+
+
+  </script>
+
+</body>
+</html>
