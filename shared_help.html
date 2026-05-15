@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+
+<script>
+/* ============================================================
+   🧩 共用函式模組（HELP 模組）
+   功能：搜尋、標定模式、座標顯示、聚焦導覽
+============================================================ */
+
+// === 全域變數 ===
+let markMode = false;     // 是否啟用標定模式
+let isDragging = false;   // 是否正在拖曳
+let markStart = null;     // 拖曳起點
+let markRect = null;      // 暫時矩形
+
+/* ============================================================
+   🔍 搜尋功能模組（支援 #標籤 + 一般搜尋）
+============================================================ */
+function attachSearch(guideData) {
+  const input = document.getElementById("searchInput");
+  const resultBox = document.getElementById("searchResults");
+
+  input.addEventListener("input", () => {
+    const keyword = input.value.trim();
+    resultBox.innerHTML = "";
+    if (!keyword) return;
+
+    // 🟡 特殊模式：顯示所有標籤清單
+    if (keyword === "#") {
+      const tagSet = new Set();
+      for (const list of Object.values(guideData.pages)) {
+        list.forEach(it => it.tags?.forEach(t => tagSet.add(t)));
+      }
+
+      // 🟠 A-Z 排序（英文優先，不分大小寫；中文自動排在後面）
+      const tagArr = Array.from(tagSet).sort((a, b) =>
+        a.localeCompare(b, 'en', { sensitivity: 'base' })
+      );
+
+      if (tagArr.length === 0) {
+        resultBox.innerHTML = `<div class="text-muted small">目前沒有設定任何標籤。</div>`;
+        return;
+      }
+
+      resultBox.innerHTML = tagArr
+        .map(t => `<a href="#" class="tag-link">#${t}</a>`)
+        .join("<br>");
+
+      // 點擊標籤後 → 執行標籤搜尋
+      resultBox.querySelectorAll(".tag-link").forEach(a => {
+        a.addEventListener("click", e => {
+          e.preventDefault();
+          const tag = a.textContent.replace(/^#/, "");
+          showTagSearchResults(tag);
+        });
+      });
+      return;
+    }
+
+    // === 🔍 一般搜尋（標題、內文、標籤） ===
+    const matches = [];
+
+    for (const [pageUrl, list] of Object.entries(guideData.pages)) {
+      list.forEach(item => {
+        if (["顯示功能", "下拉選單"].includes(item.type)) {
+          const match =
+            (item.title && item.title.includes(keyword)) ||
+            (item.text && item.text.includes(keyword)) ||
+            (item.tags && item.tags.some(t => t.trim().toLowerCase().includes(keyword.toLowerCase())));
+          if (match) matches.push({ pageUrl, ...item });
+        }
+      });
+    }
+
+    renderSearchResults(matches, resultBox);
+  });
+}
+
+/* ============================================================
+   🏷️ 顯示含有指定標籤的項目
+============================================================ */
+function showTagSearchResults(tag) {
+  const matches = [];
+
+  for (const [pageUrl, list] of Object.entries(window.guideData.pages)) {
+    list.forEach(it => {
+      if (it.tags && it.tags.some(t => t.trim().toLowerCase() === tag.trim().toLowerCase())) {
+        matches.push({
+          pagePath: it.pagePath,
+          pageUrl: pageUrl,
+          type: it.type,
+          title: it.title,
+          text: it.text,
+          tags: it.tags
+        });
+      }
+    });
+  }
+
+  const resultBox = document.getElementById("searchResults");
+
+  if (matches.length === 0) {
+    resultBox.innerHTML = `<div class="text-muted small">找不到含有標籤「#${tag}」的項目。</div>`;
+    return;
+  }
+
+  // ⭐ 交給統一格式的 renderSearchResults
+  renderSearchResults(matches, resultBox);
+}
+
+
+/* ============================================================
+   🧩 共用的搜尋結果渲染函式
+============================================================ */
+function renderSearchResults(matches, resultBox) {
+  if (matches.length === 0) {
+    resultBox.innerHTML = `<div class="text-muted small">找不到符合的項目。</div>`;
+    return;
+  }
+
+  const finalResults = [];
+
+  matches.forEach(m => {
+    let base = {
+      pagePath: m.pagePath,
+      pageUrl: m.pageUrl,
+      targetPath: m.pagePath,  // 預設 target = self
+      targetUrl: null,
+      parentType: null,
+      type: m.type,
+      title: m.title,
+      text: m.text,
+      tags: m.tags
+    };
+
+    // 🔍 反查是否被嵌入導覽或表單引用
+    const parentEmbed = (typeof peekParentEmbeddedInfo === "function")
+      ? peekParentEmbeddedInfo(m.pagePath)
+      : null;
+
+    if (parentEmbed) {
+      base.pagePath = parentEmbed.parentPath;
+      base.pageUrl = parentEmbed.parentUrl;
+      base.targetPath = m.pagePath;
+      base.targetUrl = parentEmbed.targetUrl;
+      base.parentType = parentEmbed.type;
+    }
+
+    finalResults.push(base);
+  });
+
+  // === 群組顯示 ===
+  const grouped = {};
+  finalResults.forEach(m => {
+    if (!grouped[m.pagePath]) grouped[m.pagePath] = [];
+    grouped[m.pagePath].push(m);
+  });
+
+  resultBox.innerHTML = "";
+
+  for (const [page, items] of Object.entries(grouped)) {
+    const pageTitle = document.createElement("div");
+    pageTitle.className = "fw-bold text-secondary mt-2 mb-1";
+    pageTitle.textContent = `📄 ${page.split('/').pop()}`;
+    resultBox.appendChild(pageTitle);
+
+    const ul = document.createElement("ul");
+    ul.className = "list-unstyled ps-2";
+
+    items.forEach(it => {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <a href="#" class="search-result-link">
+          ${it.title}
+          <span class="text-warning small">#${(it.tags || []).join(" #")}</span>
+        </a>
+      `;
+
+      li.querySelector("a").addEventListener("click", e => {
+        e.preventDefault();
+
+        // ⭐ 搜尋點擊 → 手動加入點擊紀錄
+        const hotspotId = (it.targetPath + "_" + it.title);
+        addClickHistory(it.targetPath, it.title, hotspotId);
+
+        jumpToHotspot(it);
+      });
+
+      ul.appendChild(li);
+    });
+
+    resultBox.appendChild(ul);
+  }
+}
+
+
+
+/* ============================================================
+   📍 標定模式模組
+============================================================ */
+function attachMarking() {
+  const img = document.getElementById("guideImage");
+  const coordBox = document.getElementById("coordOutput");
+  const status = document.getElementById("markStatus");
+
+  // 🚫 禁止圖片拖曳
+  img.draggable = false;
+  img.style.userSelect = "none";
+  img.style.pointerEvents = "auto";
+
+  // 滑鼠按下：開始標定
+  img.addEventListener("mousedown", e => {
+    if (!markMode) return;
+    e.preventDefault();
+    const rect = img.getBoundingClientRect();
+    isDragging = true;
+    markStart = {
+      x: (e.clientX - rect.left) / rect.width,
+      y: (e.clientY - rect.top) / rect.height
+    };
+
+    markRect = document.createElement("div");
+    markRect.className = "hotspot";
+    markRect.style.position = "absolute";
+    markRect.style.background = "rgba(255,165,0,0.25)";
+    markRect.style.border = "2px dashed orange";
+    markRect.style.zIndex = "9999";
+    document.getElementById("hotspotContainer").appendChild(markRect);
+  });
+
+  // 滑鼠移動：動態更新矩形
+  document.addEventListener("mousemove", e => {
+    if (!isDragging || !markMode) return;
+    const rect = img.getBoundingClientRect();
+    const currX = (e.clientX - rect.left) / rect.width;
+    const currY = (e.clientY - rect.top) / rect.height;
+
+    const x = Math.min(markStart.x, currX);
+    const y = Math.min(markStart.y, currY);
+    const w = Math.abs(currX - markStart.x);
+    const h = Math.abs(currY - markStart.y);
+
+    Object.assign(markRect.style, {
+      top: (y * rect.height) + "px",
+      left: (x * rect.width) + "px",
+      width: (w * rect.width) + "px",
+      height: (h * rect.height) + "px"
+    });
+  });
+
+  // 滑鼠放開：輸出結果
+  document.addEventListener("mouseup", e => {
+    if (!isDragging || !markMode) return;
+    isDragging = false;
+
+    const rect = img.getBoundingClientRect();
+    const end = {
+      x: (e.clientX - rect.left) / rect.width,
+      y: (e.clientY - rect.top) / rect.height
+    };
+
+    const x = Math.min(markStart.x, end.x);
+    const y = Math.min(markStart.y, end.y);
+    const w = Math.abs(end.x - markStart.x);
+    const h = Math.abs(end.y - markStart.y);
+
+    coordBox.textContent = [x, y, w, h].map(v => v.toFixed(4)).join("\t");
+    if (markRect) { markRect.remove(); markRect = null; }
+  });
+
+  status.textContent = "狀態：" + (markMode ? "啟用" : "關閉");
+}
+
+/* ============================================================
+   🔍 檢查該畫面是否被其他頁的「嵌入導覽」引用
+============================================================ */
+function findParentEmbeddedPage(childPagePath) {
+  if (!window.guideCache) return null;
+
+  // 逐頁檢查各頁的熱區設定
+  for (const [parentUrl, list] of Object.entries(window.guideCache)) {
+    const relatedList = list.filter(it => ["嵌入導覽", "開啟表單"].includes(it.type));
+
+    for (const item of relatedList) {
+      // ✅ 若這列的 targetPath 就是當前子頁的 pagePath
+      if (item.targetPath === childPagePath) {
+        //console.log("🟢 [findParentEmbeddedPage] 找到來源列:", item.title, item.type);
+        // 回傳完整資訊
+        return {
+          parentPath: item.pagePath,    // 父頁面在資料表中的識別
+          parentUrl: parentUrl,         // 父頁圖片網址
+          targetUrl: item.targetUrl,    // 🟢 目標畫面網址（表單圖）
+          type: item.type,              // 🟠 類型（嵌入導覽 / 開啟表單）
+          title: item.title             // 可選：保留給 debug
+        };
+      }
+    }
+  }
+
+  //console.warn("⚠️ [findParentEmbeddedPage] 找不到對應來源頁:", childPagePath);
+  return null;
+}
+
+/* ============================================================
+   🧭 peekParentEmbeddedInfo(childPagePath)
+   功能：靜態查詢版本（僅回傳父層關聯資訊，不執行任何動作）
+   ------------------------------------------------------------
+   🔹 用途：
+       - 在搜尋階段 (renderSearchResults) 使用。
+       - 只用來判斷某個子頁 (childPagePath) 是否被其他頁以
+         「嵌入導覽」或「開啟表單」的方式引用。
+       - 與 findParentEmbeddedPage() 相同邏輯，
+         但不會實際呼叫 openFormOverlay() 或切換畫面。
+   🔹 回傳內容：
+       {
+         parentPath: 父頁面在資料表中的識別名稱,
+         parentUrl: 父頁圖片網址,
+         targetUrl: 子頁圖片網址,
+         type: 嵌入導覽 或 開啟表單,
+         title: 該熱區名稱（僅供除錯或顯示）
+       }
+   🔹 注意：
+       - 僅用於生成搜尋結果階段，請勿在點擊後使用。
+       - 若要在點擊時真正開啟表單，請改用 findParentEmbeddedPage()。
+============================================================ */
+function peekParentEmbeddedInfo(childPagePath) {
+  if (!window.guideCache) return null;
+
+  for (const [parentUrl, list] of Object.entries(window.guideCache)) {
+    const relatedList = list.filter(it => ["嵌入導覽", "開啟表單"].includes(it.type));
+
+    for (const item of relatedList) {
+      if (item.targetPath === childPagePath) {
+        // 🟢 只回傳，不執行任何開表單行為
+        return {
+          parentPath: item.pagePath,
+          parentUrl: parentUrl,
+          targetUrl: item.targetUrl,
+          type: item.type,
+          title: item.title
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/* ============================================================
+   🎚️ 切換標定模式
+============================================================ */
+function toggleMarkMode() {
+  markMode = !markMode;
+  const btn = document.getElementById("markToggleBtn");
+  const status = document.getElementById("markStatus");
+  btn.textContent = markMode ? "關閉標定模式" : "切換標定模式";
+  btn.classList.toggle("btn-danger", markMode);
+  btn.classList.toggle("btn-warning", !markMode);
+  status.textContent = "狀態：" + (markMode ? "啟用" : "關閉");
+}
+
+/* ============================================================
+   🧭 搜尋結果跳轉與聚焦 tooltip（含完整偵錯＋表單載入監聽）
+============================================================ */
+function jumpToHotspot(item) {
+  // 🧹 每次點擊搜尋結果或紀錄前 → 先清掉所有表單
+  if (typeof closeAllFormOverlays === "function") closeAllFormOverlays();
+
+  const childPath = item.targetPath || item.pagePath;
+
+  // ============================================================
+  // 🟦 反向查找「嵌入導覽 / 開啟表單」的來源（父頁/父容器）
+  // ============================================================
+  if (typeof findParentEmbeddedPage === "function") {
+    const parentEmbed = findParentEmbeddedPage(childPath);
+    if (parentEmbed) {
+      item.parentType = parentEmbed.type;
+      item.pageUrl = parentEmbed.parentUrl;  // 父頁圖片
+      item.targetUrl = parentEmbed.targetUrl; // 子頁圖片
+    }
+  }
+
+  const basePath = item.targetPath || item.pagePath;
+  const hotspotId = (basePath + "_" + item.title);
+
+  if (typeof focusAndOpenTooltip !== "function") {
+    console.error("❌ focusAndOpenTooltip 未載入");
+    return;
+  }
+
+  // ============================================================
+  // 🟧 特別處理：若熱區在全域表單內（開啟全域表單）
+  // ============================================================
+  if (typeof findGlobalFormParentByTargetUrl === "function") {
+
+    let realPageUrl = null;
+
+    // 找出 basePath 是屬於哪個 pageUrl
+    for (const [pageUrl, list] of Object.entries(guideCache)) {
+      if (list.some(it => it.pagePath === basePath)) {
+        realPageUrl = pageUrl;
+        break;
+      }
+    }
+
+    if (realPageUrl) {
+      const globalParent = findGlobalFormParentByTargetUrl(realPageUrl);
+
+      if (globalParent && typeof openGlobalFormOverlay === "function") {
+
+        openGlobalFormOverlay(globalParent.item);
+
+        // 等載入後抓子熱區
+        const obs = new MutationObserver(() => {
+          const formTarget = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+          if (formTarget) {
+            obs.disconnect();
+            focusAndOpenTooltip(formTarget, item);
+          }
+        });
+
+        obs.observe(document.body, { childList: true, subtree: true });
+        return;
+      }
+    }
+  }
+
+  // ============================================================
+  // 🟦 若不在正確頁面 → 切換到主頁/父頁
+  // ============================================================
+  if (typeof currentPage !== "undefined" && currentPage !== item.pageUrl) {
+
+    switchPage(item.pageUrl);
+
+    const container = document.getElementById("hotspotContainer") || document.body;
+
+    const observer = new MutationObserver(() => {
+      const target = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+
+      // ========================================================
+      // 表單型
+      // ========================================================
+      if (target || item.parentType === "開啟表單") {
+        observer.disconnect();
+
+        if (item.parentType === "開啟表單" &&
+            typeof openFormOverlay === "function") {
+
+          openFormOverlay({
+            targetPath: item.pagePath,
+            targetUrl: item.targetUrl,
+            title: item.title
+          });
+
+          const formObserver = new MutationObserver(() => {
+            const formTarget = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+            if (formTarget) {
+              formObserver.disconnect();
+              focusAndOpenTooltip(formTarget, item);
+            }
+          });
+
+          formObserver.observe(document.body, { childList: true, subtree: true });
+        }
+
+        // ========================================================
+        // 一般熱區
+        // ========================================================
+        else if (target) {
+          focusAndOpenTooltip(target, item);
+        }
+      }
+    });
+
+    observer.observe(container, { childList: true, subtree: true });
+    return;
+  }
+
+  // ============================================================
+  // 🟩 已在主頁：找熱區
+  // ============================================================
+  const target = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+
+  // ============================================================
+  // 表單型（同頁）
+  // ============================================================
+  if (item.parentType === "開啟表單" && typeof openFormOverlay === "function") {
+
+    openFormOverlay({
+      targetPath: item.pagePath,
+      targetUrl: item.targetUrl,
+      title: item.title
+    });
+
+    const formObserver = new MutationObserver(() => {
+      const formTarget = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+      if (formTarget) {
+        formObserver.disconnect();
+        focusAndOpenTooltip(formTarget, item);
+      }
+    });
+
+    formObserver.observe(document.body, { childList: true, subtree: true });
+
+    setTimeout(() => {
+      const fallback = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+      if (fallback) focusAndOpenTooltip(fallback, item);
+    }, 500);
+
+    return;
+  }
+
+  // ============================================================
+  // 一般顯示功能
+  // ============================================================
+  if (target) {
+    focusAndOpenTooltip(target, item);
+    return;
+  }
+
+  console.warn("❌ 找不到任何熱區：", hotspotId);
+}
+
+/* ============================================================
+   🧹 關閉所有開啟中的表單浮層
+============================================================ */
+function closeAllFormOverlays() {
+  //console.log("🧹 關閉所有表單浮層");
+  for (const key in activeFormOverlays) {
+    activeFormOverlays[key].forEach(el => el.remove());
+    delete activeFormOverlays[key];
+  }
+  // 恢復父層熱區互動與滾動
+  document.querySelectorAll("#hotspotContainer .hotspot").forEach(h => h.style.pointerEvents = "auto");
+  const content = document.getElementById("content");
+  if (content) content.style.overflowY = "scroll";
+}
+
+/* ============================================================
+   📘 點擊紀錄資料結構
+   ============================================================ */
+window._clickHistory = [];
+window._isClickingHistoryCard = false;
+
+
+/* ============================================================
+   ➕ 新增一筆點擊紀錄
+   ============================================================ */
+/* ============================================================
+   📝 新增一筆點擊紀錄（含重複濾除）
+============================================================ */
+function addClickHistory(path, title, hotspotId) {
+  if (!path || !title || !hotspotId) return;
+
+  // 不記錄點擊紀錄卡片自身
+  if (window._isClickingHistoryCard) return;
+
+  /* ------------------------------------------------------------
+     🛑 濾除重複（若最新一筆與即將加入的完全相同 → 不加入）
+  ------------------------------------------------------------ */
+  const last = window._clickHistory[0];
+  if (last &&
+      last.path === path &&
+      last.title === title &&
+      last.hotspotId === hotspotId) {
+
+    // 如果是同一個，只更新時間（可選）
+    // last.time = new Date().toLocaleString('sv');
+
+    return; // 🚫 不新增
+  }
+
+  /* ------------------------------------------------------------
+     🕒 生成時間字串（和你現有格式一致）
+  ------------------------------------------------------------ */
+  const t = new Date();
+  const ts =
+    t.getFullYear() + "-" +
+    String(t.getMonth() + 1).padStart(2, '0') + "-" +
+    String(t.getDate()).padStart(2, '0') + " " +
+    String(t.getHours()).padStart(2, '0') + ":" +
+    String(t.getMinutes()).padStart(2, '0') + ":" +
+    String(t.getSeconds()).padStart(2, '0');
+
+  /* ------------------------------------------------------------
+     ➕ 新增到最前面
+  ------------------------------------------------------------ */
+  
+  window._clickHistory.unshift({ path, title, hotspotId, time: ts });
+
+  /* ------------------------------------------------------------
+     限制最多 20 筆
+  ------------------------------------------------------------ */
+  if (window._clickHistory.length > 20) {
+    window._clickHistory.pop();
+  }
+
+  /* ------------------------------------------------------------
+     重新渲染
+  ------------------------------------------------------------ */
+  renderClickHistoryList();
+}
+
+
+/* ============================================================
+   📋 渲染點擊紀錄列表
+   ============================================================ */
+function renderClickHistoryList() {
+  const box = document.getElementById("clickHistoryList");
+  if (!box) return;
+
+  box.innerHTML = window._clickHistory.map((h, idx) => `
+    <div class="card mb-2 p-2"
+         style="
+            cursor:pointer;
+            border-left:4px solid #ff9e36;   /* 🟧 左側橘色強調條 */
+            background:#ffffff;
+            border-radius:6px;
+            box-shadow:0 1px 3px rgba(0,0,0,0.1);
+         "
+         data-history-index="${idx}">
+
+      <!-- pagePath：淡橘文字 -->
+      <div class="small"
+           style="color:#e39652;">
+        ${h.path}
+      </div>
+
+      <!-- title：柔和藍 -->
+      <div class="fw-bold"
+           style="color:#346dba; font-size:15px;">
+        ${h.title}
+      </div>
+
+      <!-- 時間：淺灰 -->
+      <div class="small text-secondary">
+        ${h.time}
+      </div>
+    </div>
+  `).join("");
+  
+  // ⭐ 新增：自動捲到最上方（確保新紀錄可見）
+  box.scrollTop = 0;
+  /* ============================================================
+    🏷️ 點擊紀錄卡片事件 → 改用 goToHotspotForHistory 跳轉
+  ============================================================ */
+  box.querySelectorAll(".card").forEach(card => {
+    card.addEventListener("click", () => {
+
+      const idx = card.dataset.historyIndex;
+      const h = window._clickHistory[idx];
+      if (!h) return;
+
+      window._isClickingHistoryCard = true;
+
+      // 暴力清除
+      nukeAllOverlays();
+
+      // 直接使用唯一跳轉引擎
+      goToHotspotForHistory(h.hotspotId);
+
+      setTimeout(() => {
+        window._isClickingHistoryCard = false;
+      }, 300);
+    });
+  });
+}
+
+/* ============================================================
+   🟡 全域監聽：任意熱區點擊 → 自動加入點擊紀錄
+   ============================================================ */
+document.addEventListener("click", e => {
+  const hotspot = e.target.closest(".hotspot");
+  if (!hotspot) return;
+
+  const hotspotId = hotspot.dataset.hotspotId;
+  if (!hotspotId) return;
+
+  // 不記錄點擊紀錄卡片
+  if (window._isClickingHistoryCard) return;
+
+  // 解析 hotspotId = "path_title"
+  const parts = hotspotId.split("_");
+  if (parts.length < 2) return null;
+
+  const path = parts.shift();  
+  const title = parts.join("_");
+
+  // ➕ 寫入點擊紀錄
+  addClickHistory(path, title, hotspotId);
+});
+
+/* ============================================================
+   🏷️ 歷史紀錄唯一跳轉入口：goToHotspotForHistory
+   - 外部輸入 hotspotId → 自動解析 → 交給核心跳轉引擎
+============================================================ */
+function goToHotspotForHistory(hotspotId) {
+
+  // 解析為標準 item 結構
+  const item = normalizeHotspotItem(hotspotId);
+  if (!item) {
+    console.warn("❌ goToHotspotForHistory：無法解析 hotspotId =", hotspotId);
+    return;
+  }
+
+  // 交給核心跳轉引擎處理
+  jumpToHotspotCore(item);
+}
+
+/* ============================================================
+   🧪 normalizeHotspotItem 調試版
+   ------------------------------------------------------------
+   目的：解析 hotspotId 並確認所屬頁面、是否為嵌入導覽/表單
+============================================================ */
+function normalizeHotspotItem(hotspotId) {
+
+  if (!hotspotId) return null;
+
+  // === 新版解析：第一段是 pagePath，後面全部是 title ===
+  const parts = hotspotId.split("_");
+  if (parts.length < 2) return null;
+
+  const pagePath = parts.shift();
+  const title = parts.join("_");
+
+  let pageUrl = null;
+  let parentType = null;
+  let targetUrl = null;
+
+  // ① 找出此 pagePath 是哪個頁面
+  for (const [url, list] of Object.entries(window.guideCache)) {
+    if (list.some(it => it.pagePath === pagePath)) {
+      pageUrl = url;
+      break;
+    }
+  }
+
+  // ② 是否被嵌入導覽或表單引用
+  if (typeof findParentEmbeddedPage === "function") {
+    const parent = findParentEmbeddedPage(pagePath);
+    if (parent) {
+      parentType = parent.type;
+      pageUrl = parent.parentUrl;
+      targetUrl = parent.targetUrl;
+    }
+  }
+
+  return {
+    pagePath,
+    title,
+    pageUrl,
+    targetPath: pagePath,
+    targetUrl,
+    parentType
+  };
+}
+
+/* ============================================================
+   🏷️ 核心跳轉邏輯：jumpToHotspotCore
+   - 統一處理跨頁 / 表單 / 嵌入導覽 / 全域表單
+   - 由 normalizeHotspotItem 產生的 item 驅動
+============================================================ */
+function jumpToHotspotCore(item) {
+
+  // 解析 hotspotId
+  const hotspotId = item.pagePath + "_" + item.title;
+  const basePath = item.targetPath || item.pagePath;
+
+  // ============================================================
+  // 🧹 先清掉所有表單
+  // ============================================================
+  if (typeof closeAllFormOverlays === "function") {
+    closeAllFormOverlays();
+  }
+
+  // ============================================================
+  // 🟧 全域表單 → 特殊處理
+  // ============================================================
+  if (typeof findGlobalFormParentByTargetUrl === "function") {
+
+    let realPageUrl = null;
+    for (const [pageUrl, list] of Object.entries(guideCache)) {
+      if (list.some(it => it.pagePath === basePath)) {
+        realPageUrl = pageUrl;
+        break;
+      }
+    }
+
+    const globalParent = realPageUrl
+      ? findGlobalFormParentByTargetUrl(realPageUrl)
+      : null;
+
+    if (globalParent && typeof openGlobalFormOverlay === "function") {
+
+      openGlobalFormOverlay(globalParent.item);
+
+      const obs = new MutationObserver(() => {
+        const target = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+        if (target) {
+          obs.disconnect();
+          focusAndOpenTooltip(target, item);
+        }
+      });
+
+      obs.observe(document.body, { childList: true, subtree: true });
+      return;
+    }
+  }
+
+  // ============================================================
+  // 🟦 若不在正確頁 → 切頁
+  // ============================================================
+  if (typeof currentPage !== "undefined" && currentPage !== item.pageUrl) {
+
+    switchPage(item.pageUrl);
+
+    const container = document.getElementById("hotspotContainer") || document.body;
+
+    const observer = new MutationObserver(() => {
+      const targetEl = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+
+      // === 表單型 ===
+      if (item.parentType === "開啟表單" && typeof openFormOverlay === "function") {
+
+        observer.disconnect();
+
+        openFormOverlay({
+          targetPath: item.targetPath,
+          targetUrl: item.targetUrl,
+          title: item.title
+        });
+
+        const formObs = new MutationObserver(() => {
+          const formTarget = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+          if (formTarget) {
+            formObs.disconnect();
+            focusAndOpenTooltip(formTarget, item);
+          }
+        });
+
+        formObs.observe(document.body, { childList: true, subtree: true });
+      }
+
+      // === 一般熱區 ===
+      else if (targetEl) {
+        observer.disconnect();
+        focusAndOpenTooltip(targetEl, item);
+      }
+    });
+
+    observer.observe(container, { childList: true, subtree: true });
+    return;
+  }
+
+  // ============================================================
+  // 🟩 當前頁 → 找熱區
+  // ============================================================
+  const target = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+
+  if (item.parentType === "開啟表單" && typeof openFormOverlay === "function") {
+
+    openFormOverlay({
+      targetPath: item.targetPath,
+      targetUrl: item.targetUrl,
+      title: item.title
+    });
+
+    const formObs = new MutationObserver(() => {
+      const formTarget = document.querySelector(`[data-hotspot-id="${hotspotId}"]`);
+      if (formTarget) {
+        formObs.disconnect();
+        focusAndOpenTooltip(formTarget, item);
+      }
+    });
+
+    formObs.observe(document.body, { childList: true, subtree: true });
+    return;
+  }
+
+  if (target) {
+    focusAndOpenTooltip(target, item);
+    return;
+  }
+
+  console.warn("❌ 找不到任何熱區：", hotspotId);
+}
+
+</script>
+</body>
+</html>
