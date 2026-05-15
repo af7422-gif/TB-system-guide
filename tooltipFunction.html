@@ -1,0 +1,862 @@
+<style>
+/* === Tooltip 共用外觀（灰底＋白框，系統風格） === */
+.tooltip-card {
+  background: #ffffff;
+  border: 2px solid #ffa50055;   /* 淡橘色邊框 */
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+
+/* === Tooltip 輸入框統一樣式 === */
+.tooltip-input {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+}
+
+.tooltip-input:focus {
+  border-color: #ffa500;
+  box-shadow: 0 0 0 2px rgba(255,165,0,0.25);
+}
+
+/* === 按鈕統一風格（避免太突兀） === */
+.tooltip-btn {
+  border-radius: 6px !important;
+}
+
+</style>
+
+<script>
+// =====================================================
+// 🧮 模組 1：BMI 計算器
+// =====================================================
+function renderBMICalc(container, args = {}) {
+
+  const defaultH = args.height || "";
+  const defaultW = args.weight || "";
+
+  container.innerHTML = `
+    <div class="tooltip-card p-2">
+
+      <div class="mb-2">
+        <label>身高 (cm)</label>
+        <input id="bmiH" type="number" value="${defaultH}"
+               class="form-control form-control-sm tooltip-input">
+      </div>
+
+      <div class="mb-2">
+        <label>體重 (kg)</label>
+        <input id="bmiW" type="number" value="${defaultW}"
+               class="form-control form-control-sm tooltip-input">
+      </div>
+
+      <button class="btn btn-warning btn-sm w-100 tooltip-btn"
+              onclick="calcBMI(this)">
+        計算 BMI
+      </button>
+      
+      <div class="mt-2 small text-center" id="bmiResult">
+        <span class="text-muted">結果會顯示在這裡</span>
+      </div>
+
+    </div>
+  `;
+}
+
+function calcBMI(btn) {
+  const root = btn.closest('.tooltip-card'); // ← 改這一行
+  const h = parseFloat(root.querySelector('#bmiH').value) / 100;
+  const w = parseFloat(root.querySelector('#bmiW').value);
+
+  if (!h || !w) {
+    root.querySelector('#bmiResult').innerHTML = "請輸入身高與體重";
+    return;
+  }
+
+  const bmi = (w / (h * h)).toFixed(1);
+  root.querySelector('#bmiResult').innerHTML =
+    `BMI：<b>${bmi}</b> ${bmi < 20 ? "（⚠️ <20，需勾選）" : ""}`;
+}
+
+
+// =====================================================
+// 🧠 模組 2：邏輯流程判斷（TB 用）
+// =====================================================
+function renderCureCheck(container) {
+  container.innerHTML = `
+    <div class="tooltip-module">
+      <button onclick="checkCureLogic(this)">檢查是否可判定完治</button>
+      <div class="tooltip-result" id="cureResult"></div>
+    </div>
+  `;
+}
+function checkCureLogic(btn) {
+  const result = btn.closest('.tooltip-module').querySelector('#cureResult');
+  result.innerHTML = `
+    <b>完治必要條件：</b><br>
+    ✔ 治療滿 6 個月<br>
+    ✔ 無症狀<br>
+    ✔ 最近影像穩定改善<br>
+    ✔ 最近 2 次痰檢陰性<br>
+  `;
+}
+
+
+// =====================================================
+// 🧮 模組 3：邏輯運算測試（可自訂擴充）
+// =====================================================
+function renderLogicDemo(container) {
+  container.innerHTML = `
+    <div class="tooltip-module">
+      <label>A</label>
+      <input id="logicA" type="number">
+      <label>B</label>
+      <input id="logicB" type="number">
+
+      <button onclick="logicCompute(this)">比較大小</button>
+      <div class="tooltip-result" id="logicResult"></div>
+    </div>
+  `;
+}
+function logicCompute(btn) {
+  const root = btn.closest('.tooltip-module');
+  const a = parseFloat(root.querySelector('#logicA').value);
+  const b = parseFloat(root.querySelector('#logicB').value);
+  const result = root.querySelector('#logicResult');
+
+  if (isNaN(a) || isNaN(b)) {
+    result.textContent = "請輸入兩個數字";
+    return;
+  }
+  result.textContent = a > b ? "A > B" : a < b ? "A < B" : "A = B";
+}
+
+// =====================================================
+// 🧮 模組：LTBI 劑量建議（含抗藥性判斷）
+// =====================================================
+function renderLtbDoseCalc(container) {
+  container.innerHTML = `
+    <div class="tooltip-module">
+
+      <label>年齡（歲）</label>
+      <input id="ltbiAge" type="number" class="form-control form-control-sm mb-2">
+
+      <label>體重（kg）</label>
+      <input id="ltbiWeight" type="number" class="form-control form-control-sm mb-2">
+
+      <label>是否為孕婦</label>
+      <select id="ltbiPreg" class="form-select form-select-sm mb-2">
+        <option value="否">否</option>
+        <option value="是">是</option>
+      </select>
+
+      <label>指標個案是否 INH 抗藥（INH-R）</label>
+      <select id="ltbiINH" class="form-select form-select-sm mb-2">
+        <option value="否">否</option>
+        <option value="是">是</option>
+      </select>
+
+      <label>指標個案是否 RMP 抗藥（RMP-R）</label>
+      <select id="ltbiRMP" class="form-select form-select-sm mb-3">
+        <option value="否">否</option>
+        <option value="是">是</option>
+      </select>
+
+      <button class="btn btn-warning btn-sm w-100" onclick="calcLtbDose(this)">計算建議劑量</button>
+
+      <div id="ltbiResult" class="tooltip-result mt-3"></div>
+    </div>
+  `;
+}
+
+
+// =====================================================
+// 🧮 模組：LTBI 劑量建議（含抗藥性判斷）
+// =====================================================
+function renderLtbDoseCalc(container) {
+  container.innerHTML = `
+    <div class="tooltip-card p-2">
+
+      <div class="tooltip-module">
+
+        <label>年齡（歲）</label>
+        <input id="ltbiAge" type="number" class="form-control form-control-sm mb-2">
+
+        <label>體重（kg）</label>
+        <input id="ltbiWeight" type="number" class="form-control form-control-sm mb-2">
+
+        <label>是否為孕婦</label>
+        <select id="ltbiPreg" class="form-select form-select-sm mb-2">
+          <option value="否">否</option>
+          <option value="是">是</option>
+        </select>
+
+        <label>指標個案是否 INH 抗藥（INH-R）</label>
+        <select id="ltbiINH" class="form-select form-select-sm mb-2">
+          <option value="否">否</option>
+          <option value="是">是</option>
+        </select>
+
+        <label>指標個案是否 RMP 抗藥（RMP-R）</label>
+        <select id="ltbiRMP" class="form-select form-select-sm mb-3">
+          <option value="否">否</option>
+          <option value="是">是</option>
+        </select>
+
+        <button class="btn btn-warning btn-sm w-100 tooltip-btn" onclick="calcLtbDose(this)">
+          計算建議劑量
+        </button>
+
+        <div id="ltbiResult" class="tooltip-result mt-3"></div>
+
+      </div>
+
+    </div>
+  `;
+}
+
+
+function calcLtbDose(btn) {
+  const root = btn.closest('.tooltip-module');
+  const age = parseFloat(root.querySelector("#ltbiAge").value);
+  const w = parseFloat(root.querySelector("#ltbiWeight").value);
+  const preg = root.querySelector("#ltbiPreg").value === "是";
+  const INH_R = root.querySelector("#ltbiINH").value === "是";
+  const RMP_R = root.querySelector("#ltbiRMP").value === "是";
+
+  const out = root.querySelector("#ltbiResult");
+
+  if (!age || !w) {
+    out.innerHTML = `<span class="text-danger">請輸入年齡與體重</span>`;
+    return;
+  }
+
+  // ✨ 劑量計算 =========================================
+  const dose = {
+    // --- 1HP ---
+    "1HP複方": (() => {
+      let base = `INH 300 mg ＋ RPT 300 mg（固定 1 顆）`;
+
+      if (w < 35) {
+        return base;
+      }
+
+      if (w >= 35 && w <= 45) {
+        return `${base}<br>RPT 150 mg × 1 顆`;
+      }
+
+      if (w > 45) {
+        return `${base}<br>RPT 150 mg × 2 顆（最大劑量）`;
+      }
+
+      return base;
+    })(),
+
+    "1HP單方": (() => {
+      const inh = `INH 300 mg（固定 1 顆）`;
+      let rptMg = 0;
+      let pills = 0;
+      let note = "";  // 最大劑量註記
+
+      if (w < 35) {
+        rptMg = 300;    // 150 × 2
+        pills = 2;
+      } else if (w >= 35 && w < 45) {
+        rptMg = 450;    // 150 × 3
+        pills = 3;
+      } else {
+        rptMg = 600;    // 上限 600 mg
+        pills = 4;
+        note = "（最大劑量）";
+      }
+
+      return `
+        ${inh}<br>
+        RPT 150 mg × ${pills} 顆（共 ${rptMg} mg）${note}
+      `;
+    })(),
+
+    // --- 3HP ---
+    "3HP複方": `INH 900 mg ＋ RPT 900 mg（固定 3 顆）`,
+    "3HP單方": (() => {
+      // ========= INH（mg/kg 計算 → 要顯示 mg/kg） =========
+      let inhMgPerKg = (age < 12) ? 25 : 15;         // 兒童 vs 成人
+      let inhVal = Math.round(w * inhMgPerKg);       // mg/kg 計算
+      let inhNote = "";
+
+      if (inhVal >= 900) {
+        inhVal = 900;
+        inhNote = "（最大劑量）";
+      }
+
+      // INH 顯示：mg + mg/kg
+      const inhStr = `${inhVal} mg（${inhMgPerKg} mg/kg）${inhNote}`;
+
+
+      // ========= RPT（體重階梯，不是 mg/kg 計算 → 不顯示 mg/kg） =========
+      let rptMg = 0;
+      let pills = 0;
+      let rptNote = "";
+
+      if (w >= 10 && w <= 14) { rptMg = 300; pills = 2; }
+      else if (w > 14 && w <= 25) { rptMg = 450; pills = 3; }
+      else if (w > 25 && w <= 32) { rptMg = 600; pills = 4; }
+      else if (w > 32 && w < 50) { rptMg = 750; pills = 5; }
+      else if (w >= 50) { rptMg = 900; pills = 6; rptNote = "（最大劑量）"; }
+
+      // RPT 顯示：只有 mg 與顆數，不顯示 mg/kg
+      const rptStr = `150 mg × ${pills} 顆（共 ${rptMg} mg）${rptNote}`;
+
+
+      // ========= 最終輸出 =========
+      return `
+        INH 300 mg：${inhStr}<br>
+        RPT 150 mg：${rptStr}
+      `;
+    })(),
+
+    // --- 4R ---
+    "4R": (() => {
+
+      // ============================
+      // 兒童 (<18 歲)
+      // ============================
+      if (age < 18) {
+        // 建議劑量：15 mg/kg
+        let mainDose = Math.round(w * 15);
+        if (mainDose >= 600) mainDose = 600;
+
+        // 容許範圍：10–20 mg/kg
+        let rangeMin = Math.round(w * 10);
+        if (rangeMin >= 600) rangeMin = 600;
+
+        let rangeMax = Math.round(w * 20);
+        if (rangeMax >= 600) rangeMax = 600;
+
+        // 最大劑量註記
+        const mainNote = (mainDose === 600) ? "（最大劑量）" : "";
+
+        return `
+          建議劑量：${mainDose} mg（15 mg/kg）${mainNote}<br>
+          容許範圍：${rangeMin}–${rangeMax} mg（10–20 mg/kg）
+        `;
+      }
+
+      // ============================
+      // 成人 (>=18 歲)
+      // ============================
+      let adultDose = Math.round(w * 10);
+      let note = "";
+
+      if (adultDose >= 600) {
+        adultDose = 600;
+        note = "（最大劑量）";
+      }
+
+      return `
+        RMP：${adultDose} mg（10 mg/kg）${note}
+      `;
+
+    })(),
+
+    // --- 3HR ---
+    "3HR": (() => {
+      // ========= 兒童 (<18 歲) =========
+      if (age < 18) {
+        // INH：建議 10 mg/kg，容許 7–15 mg/kg，上限 300 mg
+        let inhMain = Math.round(w * 10);
+        if (inhMain >= 300) inhMain = 300;
+
+        let inhMin = Math.round(w * 7);
+        if (inhMin >= 300) inhMin = 300;
+
+        let inhMax = Math.round(w * 15);
+        if (inhMax >= 300) inhMax = 300;
+
+        const inhNote = (inhMain === 300) ? "（最大劑量）" : "";
+
+        // RMP：建議 15 mg/kg，容許 10–20 mg/kg，上限 600 mg
+        let rmpMain = Math.round(w * 15);
+        if (rmpMain >= 600) rmpMain = 600;
+
+        let rmpMin = Math.round(w * 10);
+        if (rmpMin >= 600) rmpMin = 600;
+
+        let rmpMax = Math.round(w * 20);
+        if (rmpMax >= 600) rmpMax = 600;
+
+        const rmpNote = (rmpMain === 600) ? "（最大劑量）" : "";
+
+        return `
+          INH：建議劑量：${inhMain} mg（10 mg/kg）${inhNote}<br>
+          INH：容許範圍：${inhMin}–${inhMax} mg（7–15 mg/kg）<br>
+          RMP：建議劑量：${rmpMain} mg（15 mg/kg）${rmpNote}<br>
+          RMP：容許範圍：${rmpMin}–${rmpMax} mg（10–20 mg/kg）
+        `;
+      }
+
+      // ========= 成人 (>=18 歲) =========
+      // INH：建議 5 mg/kg，上限 300 mg
+      let inhAdult = Math.round(w * 5);
+      let inhNote = "";
+      if (inhAdult >= 300) {
+        inhAdult = 300;
+        inhNote = "（最大劑量）";
+      }
+
+      // RMP：建議 10 mg/kg，上限 600 mg
+      let rmpAdult = Math.round(w * 10);
+      let rmpNote = "";
+      if (rmpAdult >= 600) {
+        rmpAdult = 600;
+        rmpNote = "（最大劑量）";
+      }
+
+      return `
+        INH：${inhAdult} mg（5 mg/kg）${inhNote}<br>
+        RMP：${rmpAdult} mg（10 mg/kg）${rmpNote}
+      `;
+    })(),
+
+    // === 6H/9H ===
+    "6H": (() => {
+
+      // ======= 兒童 (<18 歲) =======
+      if (age < 18) {
+        // 主要建議：10 mg/kg（最大 300 mg）
+        let mainDose = Math.round(w * 10);
+        if (mainDose >= 300) mainDose = 300;
+
+        // 容許範圍：7–15 mg/kg（最大 300 mg）
+        let rangeMin = Math.round(w * 7);
+        if (rangeMin >= 300) rangeMin = 300;
+
+        let rangeMax = Math.round(w * 15);
+        if (rangeMax >= 300) rangeMax = 300;
+
+        const note = (mainDose === 300) ? "（最大劑量）" : "";
+
+        return `
+          INH：建議劑量：${mainDose} mg（10 mg/kg）${note}<br>
+          INH：容許範圍：${rangeMin}–${rangeMax} mg（7–15 mg/kg）
+        `;
+      }
+
+      // ======= 成人 (>=18 歲) =======
+      let adultDose = Math.round(w * 5);  // 5 mg/kg
+      let note = "";
+
+      if (adultDose >= 300) {
+        adultDose = 300;
+        note = "（最大劑量）";
+      }
+
+      return `
+        INH：${adultDose} mg（5 mg/kg）${note}
+      `;
+    })(),
+
+    "9H": (() => {
+
+      // ======= 兒童 (<18 歲) =======
+      if (age < 18) {
+        // 主要建議：10 mg/kg（最大 300 mg）
+        let mainDose = Math.round(w * 10);
+        if (mainDose >= 300) mainDose = 300;
+
+        // 容許範圍：7–15 mg/kg（最大 300 mg）
+        let rangeMin = Math.round(w * 7);
+        if (rangeMin >= 300) rangeMin = 300;
+
+        let rangeMax = Math.round(w * 15);
+        if (rangeMax >= 300) rangeMax = 300;
+
+        const note = (mainDose === 300) ? "（最大劑量）" : "";
+
+        return `
+          INH：建議劑量：${mainDose} mg（10 mg/kg）${note}<br>
+          INH：容許範圍：${rangeMin}–${rangeMax} mg（7–15 mg/kg）
+        `;
+      }
+
+      // ======= 成人 (>=18 歲) =======
+      let adultDose = Math.round(w * 5);  // 5 mg/kg
+      let note = "";
+
+      if (adultDose >= 300) {
+        adultDose = 300;
+        note = "（最大劑量）";
+      }
+
+      return `
+        INH：${adultDose} mg（5 mg/kg）${note}
+      `;
+    })(),
+
+
+    // --- FQ 處方：同時列 LFX / MFX ---
+    "6FQ": (() => {
+
+      // ======== 年齡切分：兒童 <18 / 成人 >=18 ========
+      const isChild = age < 18;
+
+      // ======== LFX（Levofloxacin）========
+      let lfxMinMgKg, lfxMaxMgKg; // mg/kg 範圍
+
+      if (isChild) {
+        lfxMinMgKg = 15;   // 15–20 mg/kg
+        lfxMaxMgKg = 20;
+      } else {
+        lfxMinMgKg = 10;   // 10–15 mg/kg
+        lfxMaxMgKg = 15;
+      }
+
+      let lfxMin = Math.round(w * lfxMinMgKg);
+      let lfxMax = Math.round(w * lfxMaxMgKg);
+
+      if (lfxMin > 750) lfxMin = 750;
+      if (lfxMax > 750) lfxMax = 750;
+
+      const lfxMaxNote = (lfxMax === 750) ? "（最大劑量）" : "";
+
+
+      // ======== MFX（Moxifloxacin）========
+      let mfxStr = "";
+
+      if (isChild) {
+        // 兒童：10–15 mg/kg（最大 400 mg）
+        let mfxMin = Math.round(w * 10);
+        let mfxMax = Math.round(w * 15);
+
+        if (mfxMin > 400) mfxMin = 400;
+        if (mfxMax > 400) mfxMax = 400;
+
+        const mfxNote = (mfxMax === 400) ? "（最大劑量）" : "";
+
+        mfxStr = `
+          【MFX】<br>
+          建議劑量範圍：${mfxMin}–${mfxMax} mg（10–15 mg/kg）${mfxNote}
+        `;
+      } else {
+        // 成人：固定 400 mg
+        mfxStr = `
+          【MFX】<br>
+          400 mg（固定劑量）
+        `;
+      }
+
+
+      // ======== LFX 與 MFX 最終顯示格式（擇一使用）========
+      return `
+        ⚠ LFX 與 MFX 擇一使用<br><br>
+
+        【LFX】<br>
+        建議劑量範圍：${lfxMin}–${lfxMax} mg（${lfxMinMgKg}–${lfxMaxMgKg} mg/kg）${lfxMaxNote}<br><br>
+
+        ${mfxStr}
+      `;
+
+    })(),
+
+
+    "9FQ": (() => {
+
+      const isChild = age < 18;
+
+      // ======== LFX ========
+      let lfxMinMgKg, lfxMaxMgKg;
+
+      if (isChild) {
+        lfxMinMgKg = 15;
+        lfxMaxMgKg = 20;
+      } else {
+        lfxMinMgKg = 10;
+        lfxMaxMgKg = 15;
+      }
+
+      let lfxMin = Math.round(w * lfxMinMgKg);
+      let lfxMax = Math.round(w * lfxMaxMgKg);
+
+      if (lfxMin > 750) lfxMin = 750;
+      if (lfxMax > 750) lfxMax = 750;
+
+      const lfxMaxNote = (lfxMax === 750) ? "（最大劑量）" : "";
+
+
+      // ======== MFX ========
+      let mfxStr = "";
+
+      if (isChild) {
+        let mfxMin = Math.round(w * 10);
+        let mfxMax = Math.round(w * 15);
+
+        if (mfxMin > 400) mfxMin = 400;
+        if (mfxMax > 400) mfxMax = 400;
+
+        const mfxNote = (mfxMax === 400) ? "（最大劑量）" : "";
+
+        mfxStr = `
+          【MFX】<br>
+          建議劑量範圍：${mfxMin}–${mfxMax} mg（10–15 mg/kg）${mfxNote}
+        `;
+      } else {
+        mfxStr = `
+          【MFX】<br>
+          400 mg（固定劑量）
+        `;
+      }
+
+
+      // ======== 最終輸出 ========
+      return `
+        ⚠ LFX 與 MFX 擇一使用<br><br>
+
+        【LFX】<br>
+        建議劑量範圍：${lfxMin}–${lfxMax} mg（${lfxMinMgKg}–${lfxMaxMgKg} mg/kg）${lfxMaxNote}<br><br>
+
+        ${mfxStr}
+      `;
+
+    })(),
+
+  };
+
+  // =========================================
+  const rows = [];
+
+  function add(name, canUse, reason, doseText) {
+    rows.push(`
+      <tr>
+        <td>${name}</td>
+        <td>${canUse 
+            ? "<span class='text-success fw-bold'>✔ 可使用</span>" 
+            : "<span class='text-danger fw-bold'>✘ 不可使用</span>"}
+        </td>
+        <td>${reason || "-"}</td>
+        <td>${canUse ? doseText : "-"}</td>
+      </tr>
+    `);
+  }
+
+  // ========= 1HP（複方）=================================
+  add("1HP（複方）",
+    age >= 13 && !preg && !INH_R && !RMP_R,
+    age < 13 ? "年齡 < 13 歲" :
+    preg ? "孕婦不可使用" :
+    (INH_R || RMP_R ? "含 INH+RPT → 任一抗藥皆不可使用" : ""),
+    dose["1HP複方"]
+  );
+
+  // ========= 1HP（單方）=================================
+  add("1HP（單方）",
+    age >= 13 && !preg && !INH_R && !RMP_R,
+    age < 13 ? "年齡 < 13 歲" :
+    preg ? "孕婦不可使用" :
+    (INH_R || RMP_R ? "含 INH+RPT → 任一抗藥皆不可使用" : ""),
+    dose["1HP單方"]
+  );
+
+  // ========= 3HP（複方）=================================
+  add("3HP（複方）",
+    age >= 2 && !preg && !INH_R && !RMP_R && w >= 50,
+    age < 2 ? "年齡 < 2 歲" :
+    preg ? "孕婦不可使用" :
+    INH_R ? "含 INH+RPT → 任一抗藥皆不可使用" :
+    RMP_R ? "含 INH+RPT → 任一抗藥皆不可使用" :
+    (w < 50 ? "體重 < 50 kg 不可使用3HP複方" : ""),
+    dose["3HP複方"]
+  );
+
+  // ========= 3HP（單方）=================================
+  add("3HP（單方）",
+    age >= 2 && !preg && !INH_R && !RMP_R,
+    age < 2 ? "年齡 < 2 歲" :
+    preg ? "孕婦不可使用" :
+    (INH_R || RMP_R ? "含 INH+RPT → 任一抗藥皆不可使用" : ""),
+    dose["3HP單方"]
+  );
+
+  // ========= 4R =================================
+  add("4R",
+    !RMP_R,
+    RMP_R ? "RMP 抗藥 → 不可使用 4R" : "",
+    dose["4R"]
+  );
+
+  // ========= 3HR =================================
+  add("3HR",
+    !(INH_R || RMP_R),
+    (INH_R || RMP_R) ? "含 INH+RMP → 任一抗藥皆不可使用" : "",
+    dose["3HR"]
+  );
+
+  // ========= 6H / 9H =================================
+  add("6H", !INH_R, INH_R ? "INH 抗藥不可使用" : "", dose["6H"]);
+  add("9H", !INH_R, INH_R ? "INH 抗藥不可使用" : "", dose["9H"]);
+
+  // ========= 6FQ / 9FQ（需 INH-R AND RMP-R）===========
+  const allowFQ = INH_R && RMP_R;
+
+  add("6FQ", allowFQ,
+    allowFQ ? "" : "需同時為 INH＋RMP 抗藥才可使用",
+    dose["6FQ"]
+  );
+
+  add("9FQ", allowFQ,
+    allowFQ ? "" : "需同時為 INH＋RMP 抗藥才可使用",
+    dose["9FQ"]
+  );
+
+  // ========== 輸出表格（保持自然寬度＋適度間距）==========
+  out.innerHTML = `
+    <div style="padding:8px;">
+
+        <table class="table table-bordered table-sm ltbi-dose-table"
+              style="margin:auto; table-layout:auto; border-collapse:collapse;">
+
+          <thead style="font-weight:900; font-size:16px; text-align:center;">
+            <tr>
+              <th style="padding:10px 16px; white-space:nowrap;">處方</th>
+              <th style="padding:10px 16px; white-space:nowrap;">可否使用</th>
+              <th style="padding:10px 16px; white-space:nowrap;">原因</th>
+              <th style="padding:10px 16px;">建議劑量</th>
+            </tr>
+          </thead>
+
+          <tbody style="font-size:14px;">
+            ${rows.join("")}
+          </tbody>
+
+        </table>
+
+    </div>
+
+    <style>
+      /* ⭐ 強制讓 Bootstrap 不要把 table 撐滿：依內容調整寬度 */
+      table.ltbi-dose-table {
+        width: auto !important;
+        max-width: none !important;
+      }
+
+      /* ⭐ 每個儲存格再加一點 padding → 讓欄位稍微變寬、易讀 */
+      table.ltbi-dose-table td,
+      table.ltbi-dose-table th {
+        padding: 8px 14px !important;
+        vertical-align: middle;
+      }
+
+      /* ⭐ 標題置中 */
+      table.ltbi-dose-table thead th {
+        text-align: center !important;
+      }
+
+      /* ⭐ 讓內容欄位（尤其建議劑量）可自然換行、不撐很長 */
+      table.ltbi-dose-table td:nth-child(4) {
+        white-space: normal;
+      }
+    </style>
+  `;
+
+}
+
+// =====================================================
+// 🧩 主控：根據占位符注入模組
+// =====================================================
+function tooltipInjectSpecialBlocks(wrapper) {
+
+  wrapper.querySelectorAll(".placeholder-module").forEach(ph => {
+
+    const module = ph.dataset.module;
+    const args = parseArgs(ph.dataset.args || "");
+
+    const div = document.createElement("div");
+
+    switch (module) {
+
+      case "BMI_CALC":
+        renderBMICalc(div, args);
+        break;
+
+      case "CHECK_CURE":
+        renderCureCheck(div, args);
+        break;
+
+      case "LOGIC_RECHECK":
+        renderLogicDemo(div, args);
+        break;
+
+      case "LTBI_DOSE":  
+        renderLtbDoseCalc(div, args);
+        break;
+
+      default:
+        div.innerHTML = `<div class="text-danger small">未知模組：${module}</div>`;
+    }
+
+    ph.replaceWith(div);
+  });
+}
+
+function parseArgs(argStr) {
+  if (!argStr) return {};
+  const args = {};
+  argStr.split(/\s+/).forEach(p => {
+    const [k,v] = p.split("=");
+    if (k && v) args[k] = v.replace(/['"]/g, ""); // 去除引號
+  });
+  return args;
+}
+
+/**
+ * showContactTesting()
+ * 功能：依下拉式選單顯示不同內容
+ */
+function showContactTesting() {
+  var value = document.getElementById("selector").value;
+  var area = document.getElementById("contentArea");
+
+  switch (value) {
+    case "ruleA":
+      area.innerHTML = `
+        <img src="https://lh3.googleusercontent.com/d/1c5BEj1wbBoHMVPto5cVKhAWWpHm1EvAx=w1150?authuser=0" style="width:100%">
+        <p style="text-align:right"><em><附件11-7.結核病接觸者檢查時間及方式></em></p>
+      `;
+      break;
+
+    case "ruleB":
+      area.innerHTML = `
+        <img src="https://lh3.googleusercontent.com/d/1GDHnMOAJHp9vsEzL6BZFUizMK4Gk_9lT=w1150?authuser=0" style="width:100%">
+        <p style="text-align:right"><em><附件11-8.嬰幼兒接觸者之處置建議></em></p>
+      `;
+      break;
+
+    case "ruleC":
+      area.innerHTML = `
+        <img src="https://lh3.googleusercontent.com/d/1xg6VRJkTYLUmZ1TlGhieICx1k8KZuBF1=w1150?authuser=0" style="width:100%">
+        <p style="text-align:right"><em><工作手冊第11章(p.129)-未滿2歲兒童接觸者 LTBI 檢驗流程></em></p>
+      `;
+      break;
+
+    case "ruleD":
+      area.innerHTML = `
+        <img src="https://lh3.googleusercontent.com/d/1_7am_NBCSFLkoCl23zXzFZGDHYZ4PCKV=w1150?authuser=0" style="width:100%">
+        <p style="text-align:right"><em><工作手冊第11章(p.129)-2歲至5歲兒童接觸者 LTBI 檢驗流程></em></p>
+      `;
+      break;
+
+    case "ruleE":
+      area.innerHTML = `
+        <img src="https://lh3.googleusercontent.com/d/1b0qbSrJGJyeySTPOA3P5a3QMGFaNWMAU=w1150?authuser=0" style="width:100%">
+        <p style="text-align:right"><em><工作手冊第11章(p.129)-5歲以上接觸者 LTBI 檢驗流程></em></p>
+      `;
+      break;    
+
+
+
+    default:
+      area.innerHTML = "";
+  }
+}
+
+
+window.tooltipInjectModules = tooltipInjectSpecialBlocks;
+</script>
