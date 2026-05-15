@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+</head>
+<style>
+.emoji-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+</style>
+<body>
+
+  <!-- 🔹 標題 -->
+  <h5 class="fw-bold text-primary mb-3">
+    <img src="https://lh3.googleusercontent.com/d/1SLZ0jAi0G_rf35WkYzOLXspMdi7Hvfpm=w30?authuser=0" class="emoji-icon">
+    導覽工具面板
+  </h5>
+
+  <!-- 🔸 搜尋區 -->
+  <div class="mb-4">
+    <label for="searchInput" class="form-label fw-bold text-secondary">
+      <img src="https://lh3.googleusercontent.com/d/1ayxrID9JSxBKiRMNH4PoxuPiIMnCSuB3=w30?authuser=0" class="emoji-icon">
+      功能搜尋
+    </label>
+    <input id="searchInput" type="text" class="form-control form-control-sm mb-2" placeholder="輸入關鍵字或#顯示所有標籤...">
+    <div id="searchResults" class="small" style="max-height:60vh; overflow:auto;"></div>
+  </div>
+
+  <!-- 🔸 標定工具 -->
+  <div id="markToolBlock" class="mb-4">
+    <label class="fw-bold text-secondary d-block mb-2">
+      <img src="https://emoji.aranja.com/emojis/apple/1f5fa-fe0f.png" class="emoji-icon">
+      標定工具
+    </label>
+    <button id="markToggleBtn" class="btn btn-warning btn-sm w-100 mb-2" onclick="toggleMarkMode()">切換標定模式</button>
+    <div id="markStatus" class="text-muted small">狀態：關閉</div>
+  </div>
+
+  <!-- 🔸 座標輸出 -->
+  <div id="coordBlock" class="mb-4">
+    <label class="fw-bold text-secondary d-block mb-2">
+      <img src="https://emoji.aranja.com/emojis/apple/1f4cd.png" class="emoji-icon">
+      目前標定座標
+    </label>
+    <pre id="coordOutput" class="border p-2 bg-light small text-monospace" style="max-height:20vh; overflow:auto;">(尚未標定)</pre>
+  </div>
+
+  <!-- 🔸 目前熱區 ID 顯示 -->
+  <div id="hotspotIdBlock" class="mb-4">
+    <label class="fw-bold text-secondary d-block mb-2">
+      <img src="https://emoji.aranja.com/emojis/apple/1f4ce.png" class="emoji-icon">
+      目前熱區 ID
+    </label>
+    <pre id="currentHotspotId" class="border p-2 bg-light small text-monospace" 
+        style="max-height:10vh; overflow:auto;">(尚未點擊)</pre>
+  </div>
+
+  <!-- 🔸 點擊紀錄 -->
+  <div id="clickHistoryBlock" class="mb-4">
+
+    <!-- 🔸 標題 + 清空按鈕（左右對齊） -->
+    <div class="d-flex justify-content-between align-items-center mb-2">
+
+      <label class="fw-bold text-secondary m-0">
+        <img src="https://emoji.aranja.com/emojis/apple/1f4c4.png" class="emoji-icon">
+        點擊紀錄
+      </label>
+
+      <button id="clearHistoryBtn"
+              class="btn btn-sm btn-outline-danger py-0 px-2"
+              style="font-size:12px;">
+        清空
+      </button>
+
+    </div>
+
+    <!-- 🔸 點擊紀錄列表 -->
+    <div id="clickHistoryList"
+        style="
+            max-height:60vh;
+            overflow-y:auto;
+            border:1px solid #ddd;
+            padding:6px;
+            border-radius:6px;
+            background:#fafafa;
+        ">
+    </div>
+
+  </div>
+
+
+  <style>
+    #searchResults a {
+      text-decoration: none;
+      color: #0d6efd;
+      display: block;
+      padding: 3px 0;
+    }
+
+    #searchResults a:hover {
+      text-decoration: underline;
+      color: #0a58ca;
+    }
+
+    pre {
+      border-radius: 6px;
+      background: #f9f9f9;
+    }
+  </style>
+
+  <script>
+    // =========================================
+    // 🧩 功能面板初始化
+    // =========================================
+    function initHelp(guideData) {
+      //console.log("🧩 initHelp() 啟動");
+      window.guideData = guideData;
+
+      // 初始化搜尋功能與標定功能
+      if (typeof attachSearch === "function") attachSearch(guideData);
+      if (typeof attachMarking === "function") attachMarking();
+    }
+
+    // =========================================
+    // 🧩 控制使用者顯示的工具面板
+    // =========================================
+    function hideToolsForNormalUser() {
+      document.getElementById("markToggleBtn").style.display = "none";
+      document.getElementById("markStatus").style.display = "none";
+      document.getElementById("coordOutput").style.display = "none";
+      document.getElementById("currentHotspotId").style.display = "none";
+    }
+
+    function enableAllTools() {
+      document.getElementById("markToggleBtn").style.display = "";
+      document.getElementById("markStatus").style.display = "";
+      document.getElementById("coordOutput").style.display = "";
+      document.getElementById("currentHotspotId").style.display = "";
+    }
+
+    /* ============================================================
+      🗑️ 清空紀錄
+      ============================================================ */
+    function clearClickHistory() {
+      window._clickHistory = [];
+      renderClickHistoryList();
+    }
+
+    // 綁定清空按鈕事件（工具面板 UI 出現後才會綁定）
+    document.addEventListener("DOMContentLoaded", () => {
+      const btn = document.getElementById("clearHistoryBtn");
+      if (btn) {
+        btn.addEventListener("click", () => {
+          clearClickHistory();
+        });
+      }
+    });
+
+  </script>
+
+</body>
+</html>
