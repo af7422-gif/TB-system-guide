@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+</head>
+
+<body>
+  <style>
+    /* === 所有熱區預設顯示 pointer === */
+    .hotspot {
+      cursor: pointer !important;
+    }
+
+    /* 嵌入導覽熱區不顯示 pointer（僅作為容器） */
+    .hotspot[data-type="嵌入導覽"] {
+      cursor: default !important;
+    }
+
+    /* === 導覽標籤樣式（避免底線連在一起） === */
+    .guide-tag-link {
+      display: inline-block;
+      text-decoration: none;
+      margin: 0 4px;
+      padding: 0 2px;
+      /* 讓底線只在自己的範圍內 */
+      cursor: pointer;
+    }
+
+    .guide-tag-link:hover {
+      text-decoration: underline;
+    }
+
+    /* 讓提示內容與右側捲軸保留距離 */
+    .tooltip-inner-content {
+      padding-right: 12px;
+      /* ← 調這裡即可 */
+    }
+
+    /* 標題與內文間距再加大一點 */
+    .tooltip-inner-content .fw-bold {
+      margin-bottom: 18px !important;
+    }
+
+    /* 🟧 橘色捲軸：嵌入導覽真正的 scroll 容器 */
+    .hotspot[data-type="嵌入導覽"]>div {
+      scrollbar-color: #ffa94d #fff3e0;
+    }
+
+    .hotspot[data-type="嵌入導覽"]>div::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+      background-color: #fff3e0;
+    }
+
+    .hotspot[data-type="嵌入導覽"]>div::-webkit-scrollbar-thumb {
+      background-color: #ffa94d;
+      border-radius: 8px;
+      border: 2px solid #fff3e0;
+    }
+
+    .hotspot[data-type="嵌入導覽"]>div::-webkit-scrollbar-thumb:hover {
+      background-color: #ff9500;
+    }
+  </style>
+
+  <script>
+    /* ============================================================
+   🧡 圖片快取池：所有頁面圖片只載入一次
+============================================================ */
+window.pageImageCache = {};   // { url : Image() }
+window.pageImageLoading = {}; // { url : Promise }
+window._currentTooltipSource = null;
+
+function preloadPageImage(url) {
+  if (window.pageImageCache[url]) return Promise.resolve(window.pageImageCache[url]);
+  if (window.pageImageLoading[url]) return window.pageImageLoading[url];
+
+  // 建立 new Image() 並快取
+  window.pageImageLoading[url] = new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      window.pageImageCache[url] = img;
+      resolve(img);
+    };
+    img.src = url;
+  });
+
+  return window.pageImageLoading[url];
+}
+
+/* ============================================================
+   💥 關閉目前所有開啟中的 tooltip
+============================================================ */
+function closeAllTippies() {
+
+  // 先逐一隱藏所有還有 _tippy 的熱區（避免殘影閃一下）
+  document.querySelectorAll('.hotspot').forEach(h => {
+    if (h._tippy) {
+      try {
+        const popper = h._tippy.popper;
+        if (popper) popper.style.opacity = "0";
+        h._tippy.hide();
+        setTimeout(() => {
+          if (popper) popper.style.opacity = "";
+        }, 300);
+      } catch {}
+    }
+  });
+
+  // 🧨 最暴力的安全刪除：直接刪掉所有 tippy root
+  document.querySelectorAll('[data-tippy-root]').forEach(node => {
+    node.remove();
+  });
+
+  // 移除上一次返回 tooltip
+  delete window._returnTippy;
+}
+
+
+/* ============================================================
+   🎯 共用 Tooltip 生成函式
+   功能：自動判斷上下顯示（不往左右翻轉）
+============================================================ */
+function createTippyTooltip(el, htmlContent) {
+  if (!el) return;
+
+  const wrapper = document.createElement("div");
+  wrapper.style.maxHeight = "70vh";
+  wrapper.style.overflowY = "auto";
+  wrapper.style.minWidth = "45vh";
+
+  // 內層 padding 用來拉開與捲軸的距離
+  const inner = document.createElement("div");
+  inner.className = "tooltip-inner-content";
+  inner.innerHTML = convertPlaceholders(htmlContent);
+
+  wrapper.appendChild(inner);
+
+  if (window.tooltipInjectModules) {
+    window.tooltipInjectModules(inner); // 現在注入的是 inner，不是外層
+  }
+
+  tippy(el, {
+    content: wrapper,
+    allowHTML: true,
+    interactive: true,
+    trigger: "click",
+    theme: "light-border",
+    placement: "top",
+    appendTo: document.body,
+    maxWidth: "90vw",
+    onShow(instance) {
+      window._currentTooltipSource = instance.reference;
+    },
+    onHide(instance) {
+      // 來源暫時清空（使用者點旁邊）
+      window._currentTooltipSource = null;
+    }
+  });
+}
+
+
+function convertPlaceholders(html) {
+  // 捕捉：[[BMI_CALC]] 或 [[BMI_CALC height=170 weight=60]]
+  const regex = /\[\[([A-Z_]+)(.*?)\]\]/g;
+
+  return html.replace(regex, (match, moduleName, rawArgs) => {
+    const args = rawArgs.trim();
+    return `
+      <span 
+        class="placeholder-module"
+        data-module="${moduleName}"
+        data-args="${args}">
+      </span>
+    `;
+  });
+}
+
+/* ============================================================
+   🔍 聚焦某個熱區
+============================================================ */
+function focusHotspot(target) {
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.style.transition = 'box-shadow 0.3s, background 0.3s';
+  target.style.boxShadow = '0 0 15px 5px rgba(255,165,0,0.8)';
+  target.style.background = 'rgba(255,165,0,0.25)';
+  setTimeout(() => {
+    target.style.boxShadow = '';
+    target.style.background = 'rgba(255,165,0,0.1)';
+  }, 1000);
+}
+
+/* ============================================================
+   ⭐ 聚焦並自動開啟 tooltip（供搜尋結果點擊使用）
+============================================================ */
+function focusAndOpenTooltip(target, item) {
+  if (!target) return;
+  focusHotspot(target);
+  if (target._tippy) {
+    target._tippy.show();
+  } else if (item && item.type === "下拉選單") {
+    showSelectPopup(item, target);
+  }
+}
+
+/* ============================================================
+   🔽 顯示下拉選單型 tooltip（導覽說明 + 標籤）
+============================================================ */
+function showSelectPopup(item, hotspotDiv) {
+  const options = item.options ? item.options.split(',') : [];
+
+  const descMap = {};
+  if (item.optionDesc) {
+    item.optionDesc.split('；').forEach(p => {
+      const [k, v] = p.split('：');
+      if (k && v) descMap[k.trim()] = v.trim();
+    });
+  }
+
+  const imgMap = {};
+  if (item.images && item.images.length) {
+    item.images.forEach(p => {
+      const [k, v] = p.split('：');
+      if (k && v) imgMap[k.trim()] = v.trim();
+    });
+  }
+
+  // 🏷️ 標籤顯示區（統一樣式）
+  const tagHTML = item.tags?.length
+    ? `<div class="mt-2 small text-warning text-center">#${item.tags.join(" #")}</div>`
+    : "";
+
+  const container = document.createElement('div');
+  container.className = 'p-2 text-center';
+  container.innerHTML = `
+    <div class="fw-bold mb-2">${item.title}</div>
+    <div class="small text-muted mb-2">${item.text}</div>
+    <select class="form-select form-select-sm mb-2">
+      ${options.map(o => `<option value="${o}">${o}</option>`).join('')}
+    </select>
+    <div class="desc text-muted small mb-2 text-start"></div>
+    <div class="image-preview mt-1"></div>
+    ${tagHTML}
+  `;
+
+  const selectEl = container.querySelector('select');
+  const descEl = container.querySelector('.desc');
+  const imgBox = container.querySelector('.image-preview');
+
+  selectEl.addEventListener('change', () => {
+    const val = selectEl.value;
+    descEl.innerHTML = descMap[val] || "(無說明)";
+    imgBox.innerHTML = "";
+    const imgUrl = imgMap[val];
+    if (imgUrl) {
+      const img = document.createElement("img");
+      img.src = imgUrl;
+      img.style.cssText = "max-width:100%; max-height:150px; border-radius:8px; margin-top:4px;";
+      imgBox.appendChild(img);
+    }
+  });
+  selectEl.dispatchEvent(new Event("change"));
+
+  if (hotspotDiv._tippy) hotspotDiv._tippy.destroy();
+  tippy(hotspotDiv, {
+    content: container,
+    allowHTML: true,
+    trigger: 'click',
+    interactive: true,
+    placement: 'top',
+    theme: 'light-border',
+    maxWidth: 'none',
+    onHidden(instance) { instance.destroy(); }
+  });
+  hotspotDiv._tippy.show();
+}
+
+/* ============================================================
+   🧩 嵌入導覽（保留原圖比例 + 可捲動 + 邊框可選）
+============================================================ */
+// 🟧 子導覽圖片快取池（和主頁圖片分開管理）
+window.subGuideImageCache = {};
+window.subGuideImageLoading = {};
+
+function preloadSubGuideImage(url) {
+  if (window.subGuideImageCache[url]) return Promise.resolve(window.subGuideImageCache[url]);
+  if (window.subGuideImageLoading[url]) return window.subGuideImageLoading[url];
+
+  window.subGuideImageLoading[url] = new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      window.subGuideImageCache[url] = img;
+      resolve(img);
+    };
+    img.src = url;
+  });
+
+  return window.subGuideImageLoading[url];
+}
+
+
+/* ============================================================
+   ⚡ 加速版 renderEmbeddedGuide
+   - 不再使用 cache-busting
+   - 使用快取圖片
+   - 子熱區 DOM 也快取，不用重建
+   - 等 layout 完成後再渲染（避免跟不上）
+============================================================ */
+  function renderEmbeddedGuide(item, div) {
+    if (!item.targetUrl) return;
+
+    const scrollType = item.frameScroll || "both";
+
+    div.innerHTML = "";
+
+    // === 外層 frame ===
+    const frame = document.createElement("div");
+    Object.assign(frame.style, {
+      position: "absolute",
+      inset: 0,
+      overflowX: (scrollType === "horizontal" || scrollType === "both") ? "auto" : "hidden",
+      overflowY: (scrollType === "vertical" || scrollType === "both") ? "auto" : "hidden",
+      background: "#fff",
+      borderRadius: "8px",
+    });
+
+    const subWrapper = document.createElement("div");
+    Object.assign(subWrapper.style, {
+      position: "relative",
+      display: "inline-block"
+    });
+
+    const subImg = document.createElement("img");
+    subImg.src = item.targetUrl + "?v=" + Date.now();
+    subImg.style.display = "block";
+    subImg.style.maxWidth = "none";
+    subImg.style.maxHeight = "none";
+
+    const hotspotLayer = document.createElement("div");
+    Object.assign(hotspotLayer.style, {
+      position: "absolute",
+      top: 0,
+      left: 0
+    });
+
+    subWrapper.appendChild(subImg);
+    subWrapper.appendChild(hotspotLayer);
+    frame.appendChild(subWrapper);
+    div.appendChild(frame);
+
+    subImg.onload = () => {
+      const subData = window.guideCache[item.targetUrl];
+      if (!subData) return;
+
+      const mainImg = document.getElementById("guideImage");
+
+      // === 1️⃣ 主比例（固定不變） ===
+      const baseScale = mainImg.clientWidth / mainImg.naturalWidth;
+
+      const naturalW = subImg.naturalWidth;
+      const naturalH = subImg.naturalHeight;
+
+      const visibleW = div.clientWidth;
+      const visibleH = div.clientHeight;
+
+      let finalScale = baseScale;
+
+      // === 2️⃣ 根據 scrollType 計算填滿比例 ===
+
+      if (scrollType === "horizontal") {
+        // ⭐ 高度貼滿 → 以高度來縮放
+        finalScale = visibleH / naturalH;
+      }
+      else if (scrollType === "vertical") {
+        // ⭐ 寬度貼滿 → 以寬度來縮放
+        finalScale = visibleW / naturalW;
+      }
+      else if (scrollType === "both") {
+        // ⭐ 不特別填滿 → 用主比例（與主圖等比）
+        finalScale = baseScale;
+      }
+
+      // === 3️⃣ 套用最終縮放 ===
+      const realW = naturalW * finalScale;
+      const realH = naturalH * finalScale;
+
+      subImg.style.width = realW + "px";
+      subImg.style.height = realH + "px";
+
+      subWrapper.style.width = realW + "px";
+      subWrapper.style.height = realH + "px";
+
+      hotspotLayer.style.width = realW + "px";
+      hotspotLayer.style.height = realH + "px";
+
+      // === 4️⃣ 用實際像素渲染熱區 ===
+      hotspotLayer.innerHTML = "";
+
+      subData.forEach(it => {
+        const h = document.createElement("div");
+        h.className = "hotspot";
+        h.dataset.type = it.type;
+
+        Object.assign(h.style, {
+          position: "absolute",
+          top: (it.y * realH) + "px",
+          left: (it.x * realW) + "px",
+          width: (it.w * realW) + "px",
+          height: (it.h * realH) + "px",
+          zIndex: 10
+        });
+
+        const safeId = (it.pagePath + "_" + it.title);
+        h.dataset.hotspotId = safeId;
+
+        if (it.type === "顯示功能") {
+          const html = `
+            <div class="p-2">
+              <div class="fw-bold mb-2 text-center">${it.title}</div>
+              <div class="small text-muted text-start">${it.text}</div>
+              ${buildTagHTML(it.tags)}
+            </div>`;
+          createTippyTooltip(h, html);
+        }
+        else if (it.type === "下拉選單") {
+          h.addEventListener("click", e => {
+            e.stopPropagation();
+            showSelectPopup(it, h);
+          });
+        }
+        else if (it.type === "切換頁面") {
+          h.addEventListener("click", () => switchPage(it.targetUrl));
+        }
+        else if (it.type === "嵌入導覽") {
+          renderEmbeddedGuide(it, h);
+        }
+
+        hotspotLayer.appendChild(h);
+      });
+    };
+  }
+
+/* ============================================================
+   🧩 渲染子導覽熱區（供嵌入導覽使用 + 顯示標籤）
+============================================================ */
+/* ============================================================
+   ⚡ 子熱區快取：避免每次重新建 DOM
+============================================================ */
+if (!window.subHotspotDomCache) window.subHotspotDomCache = {};
+
+
+/* ============================================================
+   ⚡ renderSubHotspots（快取＋不重建 DOM）
+============================================================ */
+function renderSubHotspots(container, img, list) {
+  const url = img.src;  // 以子圖片的 URL 作為 key
+  const imgW = img.naturalWidth;
+  const imgH = img.naturalHeight;
+
+  /* ============================================================
+     🩹 Tag 繼承（你的原版行為）
+  ============================================================ */
+  if (container.dataset.tags) {
+    const inheritedTags = container.dataset.tags.split(",");
+    list.forEach(sub => {
+      if (!sub.tags || !sub.tags.length) sub.tags = inheritedTags;
+    });
+  }
+
+  /* ============================================================
+     ⚡ 若已有快取 → 只更新位置，不重建 DOM
+  ============================================================ */
+  if (window.subHotspotDomCache[url]) {
+    window.subHotspotDomCache[url].forEach(({ sub, div }) => {
+      div.style.top    = (sub.y * imgH) + "px";
+      div.style.left   = (sub.x * imgW) + "px";
+      div.style.width  = (sub.w * imgW) + "px";
+      div.style.height = (sub.h * imgH) + "px";
+    });
+    return;
+  }
+
+  /* ============================================================
+     🟦 第一次：建立子熱區 DOM
+  ============================================================ */
+  container.innerHTML = "";
+  const cacheList = [];
+
+  list.forEach(sub => {
+    const subDiv = document.createElement("div");
+    subDiv.className = "hotspot";
+    subDiv.dataset.type = sub.type;
+
+    Object.assign(subDiv.style, {
+      position: "absolute",
+      top: (sub.y * imgH) + "px",
+      left: (sub.x * imgW) + "px",
+      width: (sub.w * imgW) + "px",
+      height: (sub.h * imgH) + "px"
+    });
+
+    const safeId = (sub.pagePath + "_" + sub.title)
+      ;
+    subDiv.dataset.hotspotId = safeId;
+
+
+    /* ============================================================
+       === 顯示功能 ===
+       （自動支援 bindHotspotTooltip）
+    ============================================================ */
+    if (sub.type === "顯示功能") {
+      const tagHTML = buildTagHTML(sub.tags);
+      const html = `
+        <div class="p-2">
+          <div class="fw-bold mb-2 text-center">${sub.title}</div>
+          <div class="small text-muted text-start">${sub.text}</div>
+          ${tagHTML}
+        </div>`;
+
+      if (typeof bindHotspotTooltip === "function") {
+        bindHotspotTooltip(subDiv, sub);
+      } else {
+        createTippyTooltip(subDiv, html); // fallback
+      }
+    }
+
+    /* ============================================================
+       === 下拉選單 ===
+    ============================================================ */
+    else if (sub.type === "下拉選單") {
+      subDiv.addEventListener('click', e => {
+        e.stopPropagation();
+        showSelectPopup(sub, subDiv);
+      });
+    }
+
+    /* ============================================================
+       === 切換頁面 ===
+    ============================================================ */
+    else if (sub.type === "切換頁面") {
+      subDiv.addEventListener('click', () => switchPage(sub.targetUrl));
+    }
+
+    /* ============================================================
+       === 子導覽再嵌一層導覽 ===
+    ============================================================ */
+    else if (sub.type === "嵌入導覽") {
+      renderEmbeddedGuide(sub, subDiv);
+    }
+
+
+    container.appendChild(subDiv);
+    cacheList.push({ sub, div: subDiv });
+  });
+
+  /* ============================================================
+     ⭐ 第一次渲染 → 建立快取
+  ============================================================ */
+  window.subHotspotDomCache[url] = cacheList;
+}
+
+/* ============================================================
+   🔗 HTML 連結 (#hotspot_開頭) → 自動切換並聚焦對應熱區
+============================================================ */
+document.addEventListener('click', e => {
+  const hotspot = e.target.closest('.hotspot');
+  if (!hotspot) return;
+
+  const idBox = document.getElementById("currentHotspotId");
+  if (!idBox) return; // 若導覽面板不存在則略過
+
+  const hotspotId = hotspot.dataset.hotspotId || "(無 ID)";
+  idBox.textContent = hotspotId;
+
+  // 🔹 可選：高亮顯示一下更新效果
+  idBox.style.backgroundColor = "#fff3cd";
+  setTimeout(() => idBox.style.backgroundColor = "#f9f9f9", 400);
+});
+
+document.addEventListener('click', e => {
+  const clickable = e.target.closest('a, button, [onclick]');
+  if (clickable) {
+    window._lastClickedElement = clickable;
+  } else {
+    window._lastClickedElement = e.target;
+  }
+
+  const link = e.target.closest('a[href^="#hotspot_"]');
+  if (!link) return;
+
+  e.preventDefault();
+  const rawId = link.getAttribute('href').replace('#hotspot_', '').trim();
+
+  // 嘗試在當前頁面找
+  let target = document.querySelector(`[data-hotspot-id="${rawId}"]`);
+  if (target) {
+    focusHotspot(target); 
+    return;
+  }
+
+  // 找不到就掃所有頁面
+  if (typeof guideCache === "undefined") {
+    console.warn("⚠️ 尚未載入 guideCache，無法跳轉熱區。");
+    return;
+  }
+
+  let targetPage = null;
+  for (const [pageUrl, list] of Object.entries(guideCache)) {
+    const found = list.find(item => {
+      const id = (item.pagePath + "_" + item.title);
+      return id === rawId;
+    });
+    if (found) {
+      targetPage = pageUrl;
+      break;
+    }
+  }
+
+  if (!targetPage) {
+    alert("❌ 找不到對應的導覽區塊：" + rawId);
+    return;
+  }
+
+  // 自動切換頁面後再聚焦
+  if (typeof switchPage === "function") {
+    switchPage(targetPage);
+    const observer = new MutationObserver(() => {
+      const newTarget = document.querySelector(`[data-hotspot-id="${rawId}"]`);
+      if (newTarget) {
+        observer.disconnect();
+        focusHotspot(newTarget);
+      }
+    });
+    observer.observe(document.getElementById("hotspotContainer"), { childList: true, subtree: true });
+  }
+});
+
+/* ============================================================
+   🧭 監聽點擊事件，顯示目前點擊熱區的 ID 
+============================================================ */
+
+
+/* ============================================================
+   🖼️ 表單圖片浮層控制（無父層容器版）
+   功能：
+   1️⃣ 點擊「開啟表單」 → 當前畫面中央顯示圖片本身
+   2️⃣ 該圖片可有內部熱區（例如關閉表單）
+   3️⃣ 點擊「關閉表單」 → 關閉圖片與熱區
+============================================================ */
+
+let activeFormOverlays = {};  // 以 targetPath 為 keylet activeFormOverlays = {};
+
+function openFormOverlay(item) {
+  const key = item.targetPath || item.pagePath || ("form_" + Date.now());
+  //console.log("🟢 開啟表單:", key);
+  if (typeof closeAllTippies === "function") closeAllTippies();
+
+  if (activeFormOverlays[key]) {
+    activeFormOverlays[key].forEach(el => el.remove());
+    delete activeFormOverlays[key];
+  }
+
+  const guideArea = document.getElementById("content");
+  const rect = guideArea.getBoundingClientRect();
+  const container = document.getElementById("hotspotContainer");
+  container.querySelectorAll(".hotspot").forEach(h => {
+    if (h.dataset.type !== "崁入網頁") {
+      h.style.pointerEvents = "none";
+    }
+  });
+
+
+  // 🧱 禁止背景滾動
+  document.getElementById("content").style.overflow = "hidden";
+
+  // === 建立包覆容器 ===
+  const wrapper = document.createElement("div");
+  wrapper.className = "form-wrapper";
+  wrapper.style.position = "fixed";
+  wrapper.style.top = (rect.top + rect.height / 2) + "px";
+  wrapper.style.left = (rect.left + rect.width / 2) + "px";
+  wrapper.style.transform = "translate(-50%, -50%) scale(0.9)";
+  wrapper.style.zIndex = 800;
+  wrapper.style.transition = "all 0.25s ease";
+  wrapper.style.opacity = "0";
+  wrapper.style.display = "inline-block";
+
+  // 🟢 改為 95% 導覽區寬度，高度最多佔螢幕 85%
+  wrapper.style.width = rect.width * 0.8 + "px";
+  wrapper.style.maxHeight = "85vh";
+
+  // === 圖片 ===
+  const img = document.createElement("img");
+  img.src = item.targetUrl + "?v=" + Date.now();
+  img.alt = item.title || "form";
+  img.className = "form-float-img";
+  img.style.width = "100%";
+  img.style.height = "auto";
+  img.style.border = "2px solid #ffa500";
+  img.style.borderRadius = "10px";
+  img.style.boxShadow = "0 6px 18px rgba(0,0,0,0.25)";
+  img.style.background = "#fff";
+  img.style.display = "block";
+  img.style.userSelect = "none";
+  img.style.position = "relative";
+
+  wrapper.appendChild(img);
+  document.body.appendChild(wrapper);
+
+  requestAnimationFrame(() => {
+    wrapper.style.transform = "translate(-50%, -50%) scale(1)";
+    wrapper.style.opacity = "1";
+  });
+
+  activeFormOverlays[key] = [wrapper];
+
+  img.onload = () => {
+    if (window.guideCache[item.targetUrl]) {
+      const list = window.guideCache[item.targetUrl];
+
+      // 🩹 補齊 tags：若子項沒有 tags，就繼承父層的 tags
+      if (item.tags && Array.isArray(list)) {
+        list.forEach(sub => {
+          if (!sub.tags) sub.tags = item.tags;
+        });
+      }
+
+      renderHotspotsInsideWrapper(wrapper, list, key);
+    }
+  };
+}
+
+function updateFormOverlayPosition() {
+  const wrapper = document.querySelector(".form-wrapper");
+  if (!wrapper) return;
+
+  const guideArea = document.getElementById("content");
+  const rect = guideArea.getBoundingClientRect();
+
+  wrapper.style.top = (rect.top + rect.height / 2) + "px";
+  wrapper.style.left = (rect.left + rect.width / 2) + "px";
+  wrapper.style.transform = "translate(-50%, -50%)";
+  wrapper.style.width = (rect.width * 0.8) + "px";
+}
+
+/* ============================================================
+   🖼️ 表單浮層內的熱區渲染（顯示功能／下拉選單統一外層樣式）
+============================================================ */
+function renderHotspotsInsideWrapper(wrapper, list, key) {
+  const img = wrapper.querySelector("img");
+
+  list.forEach(it => {
+    const sub = document.createElement("div");
+    sub.className = `hotspot hotspot-${it.type}`;
+    Object.assign(sub.style, {
+      position: "absolute",
+      top: (it.y * 100) + "%",
+      left: (it.x * 100) + "%",
+      width: (it.w * 100) + "%",
+      height: (it.h * 100) + "%",
+      zIndex: 10
+    });
+
+    const pagePath = it.pagePath || key || "formLayer";
+    const safeId = (pagePath + "_" + it.title);
+    sub.dataset.hotspotId = safeId;
+    sub.dataset.pagePath = pagePath;
+
+    // 🏷️ 標籤 HTML（統一樣式）
+    const tagHTML = buildTagHTML(it.tags);
+
+    // 🎨 統一 tooltip 樣板（與外層完全一致）
+    const contentHTML = `
+      <div class="p-2">
+        <div class="fw-bold mb-2 text-center">${it.title}</div>
+        <div class="small text-muted text-start">${it.text}</div>
+        ${tagHTML}
+      </div>`;
+
+    // === 顯示功能 ===
+    if (it.type === "顯示功能") {
+      createTippyTooltip(sub, contentHTML);
+    }
+
+    // === 下拉選單 ===
+    else if (it.type === "下拉選單") {
+      sub.addEventListener("click", e => {
+        e.stopPropagation();
+        showSelectPopup(it, sub); // ✅ 使用外層統一樣式的下拉式說明
+      });
+    }
+
+    // === 開啟表單 ===
+    else if (it.type === "開啟表單") {
+      sub.addEventListener("click", () => openFormOverlay(it));
+      tippy(sub, { 
+        content: `<b>${it.title}</b><br>${it.text}${tagHTML}`, 
+        allowHTML: true 
+      });
+    }
+
+    // === 關閉表單 ===
+    else if (it.type === "關閉表單") {
+      sub.dataset.parentKey = key;
+      sub.addEventListener("click", () => closeFormOverlay(it, sub.dataset.parentKey));
+      tippy(sub, { 
+        content: `<b>${it.title}</b><br>${it.text}${tagHTML}`, 
+        allowHTML: true 
+      });
+    }
+
+    else if (it.type === "崁入網頁") {
+      // 建立一個容器（和主頁邏輯一致）
+      const frame = document.createElement("div");
+      Object.assign(frame.style, {
+        position: "absolute",
+        top: (it.y * 100) + "%",
+        left: (it.x * 100) + "%",
+        width: (it.w * 100) + "%",
+        height: (it.h * 100) + "%",
+        overflowY: "auto",
+        overflowX: "hidden",
+        padding: "8px 12px",
+        background: "#fff",
+        borderRadius: "8px",
+        zIndex: 10
+      });
+
+      frame.innerHTML = it.text || "";
+      wrapper.appendChild(frame);
+
+      activeFormOverlays[key].push(frame);
+      return;
+    }
+
+    wrapper.appendChild(sub);
+
+    // 登記於 activeFormOverlays 方便關閉時移除
+    if (!activeFormOverlays[key]) activeFormOverlays[key] = [];
+    activeFormOverlays[key].push(sub);
+  });
+}
+
+function closeFormOverlay(item, explicitKey) {
+  const key = explicitKey || item.targetPath || item.pagePath;
+  //console.log("🔴 關閉表單:", key);
+
+  const overlays = activeFormOverlays[key];
+  if (!overlays) {
+    console.warn("⚠️ 找不到要關閉的表單:", key);
+    return;
+  }
+
+  overlays.forEach(el => el.remove());
+  delete activeFormOverlays[key];
+
+  // 恢復父層熱區互動
+  document.querySelectorAll("#hotspotContainer .hotspot").forEach(h => h.style.pointerEvents = "auto");
+  document.getElementById("content").style.overflowY = "scroll";
+  
+}
+/* ============================================================
+   🧭 highlightWithReturn - 支援跨頁／跨層導引 + 返回源說明（安全版）
+============================================================ */
+function highlightWithReturn(targetId, returnTitle) {
+  // ============================================================
+  // 📝 若來源在「崁入網頁」中 → 記錄卷軸位置與父容器
+  // ============================================================
+  (function recordEmbedScrollPosition(e) {
+
+    // ⭐ 由事件來源找觸發 highlightWithReturn 的元素
+    const trigger = window._lastClickedElement;
+    if (!trigger) {
+      return;
+    }
+
+    // ⭐ 從 trigger 往上找最近的「崁入網頁」
+    const embed = trigger.closest('.hotspot[data-type="崁入網頁"]');
+    if (!embed) {
+      return;
+    }
+
+    // ⭐ 真正捲動框（你崁入網頁的外層 frame）
+    const frame = embed.querySelector(':scope > div');
+    if (!frame) {
+      return;
+    }
+
+    window.__returnFromEmbed = {
+      parentHotspotId: embed.dataset.hotspotId,
+      scrollTop: frame.scrollTop
+    };
+
+    console.log("📝 已記錄崁入網頁返回資訊：", window.__returnFromEmbed);
+
+  })();
+
+  
+  window._lastHotspotId = null;
+  window._returnTippy = null;
+
+  let lastId = null;
+
+  // ===========================================
+  // ① 找來源 Tooltip
+  // ===========================================
+  const activeHotspot = window._currentTooltipSource;
+  if (activeHotspot) {
+    lastId = activeHotspot.dataset.hotspotId;
+    window._lastHotspotId = lastId;
+    //console.log("🧭 當前來源 hotspotId =", lastId);
+  } else {
+    //console.log("⚠️ 沒有找到來源 tooltip");
+  }
+
+  closeAllTippies();
+
+  // ===========================================
+  // ② 當前頁面是否直接找得到？
+  // ===========================================
+  let target = document.querySelector(`[data-hotspot-id="${targetId}"]`);
+  if (target) {
+    //console.log("✅ 當前頁面直接找到 target → 不需跨頁");
+    focusHotspot(target);
+    recordHighlightForward(targetId, target);
+    showReturnTooltip(target, lastId);
+    console.groupEnd();
+    return;
+  }
+  //console.log("🔸 當前頁面找不到 target，開始進階模式");
+
+  // 取得 pagePath
+  const basePath = targetId.replace(/_[^_]+$/, "");
+  //console.log("📌 basePath =", basePath);
+
+  // ===========================================
+  // ③ 嘗試 Peek：是否在表單 / 嵌入導覽？
+  // ===========================================
+  if (typeof peekParentEmbeddedInfo === "function") {
+    const parentEmbed = peekParentEmbeddedInfo(basePath);
+    //console.log("🔍 peekParentEmbeddedInfo =", parentEmbed);
+
+    if (parentEmbed) {
+
+      // --- 表單 ---
+      if (parentEmbed.type === "開啟表單") {
+        //console.log("📋 判斷 → 【開啟表單】");
+        //console.log("📋 開啟表單 URL =", parentEmbed.targetUrl);
+
+        openFormOverlay({
+          targetPath: basePath,
+          targetUrl: parentEmbed.targetUrl,
+          title: returnTitle
+        });
+
+        const obs = new MutationObserver(() => {
+          const newTarget = document.querySelector(`[data-hotspot-id="${targetId}"]`);
+          if (newTarget) {
+            //console.log("📋 表單載入完畢 → 定位 target");
+            obs.disconnect();
+            focusHotspot(newTarget);
+            recordHighlightForward(targetId, newTarget);
+            showReturnTooltip(newTarget, lastId);
+          }
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+
+        console.groupEnd();
+        return;
+      }
+
+      // --- 嵌入導覽 ---
+      if (parentEmbed.type === "嵌入導覽") {
+        //console.log("🧩 判斷 → 【嵌入導覽】，跳轉到父頁 =", parentEmbed.parentUrl);
+
+        switchPage(parentEmbed.parentUrl);
+
+        const obs = new MutationObserver(() => {
+          const newTarget = document.querySelector(`[data-hotspot-id="${targetId}"]`);
+          if (newTarget) {
+            //console.log("🧩 嵌入導覽載入完畢 → 定位 target");
+            obs.disconnect();
+            focusHotspot(newTarget);
+            recordHighlightForward(targetId, newTarget);
+            showReturnTooltip(newTarget, lastId);
+          }
+        });
+        obs.observe(document.getElementById("hotspotContainer"), { childList: true, subtree: true });
+
+        console.groupEnd();
+        return;
+      }
+    }
+  } else {
+    //console.log("⚠️ peekParentEmbeddedInfo 未定義");
+  }
+
+  // ===============================
+  // ⭐ 正確的「開啟全域表單」判斷
+  // ===============================
+  if (typeof findGlobalFormParentByTargetUrl === "function") {
+
+    // ① 找出該 pagePath 對應的 pageUrl（主畫面圖片網址）
+    let realPageUrl = null;
+
+    for (const [pageUrl, list] of Object.entries(guideCache)) {
+      if (list.some(it => it.pagePath === basePath)) {
+        realPageUrl = pageUrl;
+        break;
+      }
+    }
+
+    //console.log("📌 [全域表單] realPageUrl =", realPageUrl);
+
+    // 找不到該頁 → 無法比對
+    if (realPageUrl) {
+
+      // ② 用該頁的 pageUrl 去找是否有「開啟全域表單」
+      const globalParent = findGlobalFormParentByTargetUrl(realPageUrl);
+
+      //console.log("📌 [全域表單] findGlobalFormParentByTargetUrl =", globalParent);
+
+      if (globalParent && typeof openGlobalFormOverlay === "function") {
+
+        //console.log("🌐【開啟全域表單】", globalParent.item);
+
+        openGlobalFormOverlay(globalParent.item);
+
+        const obs = new MutationObserver(() => {
+          const newTarget = document.querySelector(
+            `[data-hotspot-id="${targetId}"]`
+          );
+          if (newTarget) {
+            obs.disconnect();
+            recordHighlightForward(targetId, newTarget);
+            focusHotspot(newTarget);
+            showReturnTooltip(newTarget, lastId);
+          }
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+
+        return;
+      }
+    }
+  }
+
+
+  // ===========================================
+  // ⑤ 一般跨頁搜尋（正常頁面）
+  // ===========================================
+  //console.log("🌍 進入一般跨頁搜尋...");
+
+  if (typeof guideCache === "object") {
+    for (const [pageUrl, list] of Object.entries(guideCache)) {
+
+      const found = list.find(it => {
+        const id = (it.pagePath + "_" + it.title);
+        return id === targetId;
+      });
+
+      if (found) {
+        //console.log("🌍 找到目標頁 =", pageUrl);
+        //console.log("🌍 item =", found);
+
+        const embedParent = findEmbedParentPageByTargetUrl(pageUrl);
+        const realPage = embedParent ? embedParent.parentPageUrl : pageUrl;
+
+        switchPage(realPage);
+
+        const obs = new MutationObserver(() => {
+          const newTarget = document.querySelector(`[data-hotspot-id="${targetId}"]`);
+          if (newTarget) {
+            //console.log("🌍 跨頁載入完畢 → 定位 target");
+            obs.disconnect();
+            focusHotspot(newTarget);
+            recordHighlightForward(targetId, newTarget);
+            showReturnTooltip(newTarget, lastId);
+          }
+        });
+        obs.observe(document.getElementById("hotspotContainer"), {
+          childList: true,
+          subtree: true
+        });
+
+        console.groupEnd();
+        return;
+      }
+    }
+  }
+
+  console.warn("❌ 找不到任何匹配的頁面或表單");
+  console.groupEnd();
+}
+
+function recordHighlightForward(targetId, targetEl) {
+  if (!targetId || !targetEl) return;
+
+  const hotspotId = targetId;
+  const parts = hotspotId.split("_");
+  if (parts.length < 2) return;
+
+  const pagePath = parts.shift();
+  const title = parts.join("_");
+
+  addClickHistory(pagePath, title, hotspotId);
+}
+
+
+function recordHighlightReturn(sourceId, sourceEl) {
+  if (!sourceId || !sourceEl) return;
+
+  const hotspotId = sourceId;
+  const parts = hotspotId.split("_");
+  if (parts.length < 2) return null;
+
+  const path = parts.shift();  
+  const title = parts.join("_");
+
+  addClickHistory(path, title, hotspotId);
+}
+
+// === 開啟全域表單的判斷 ===
+function findGlobalFormParentByTargetUrl(targetUrl) {
+  if (!window.guideCache) return null;
+
+  for (const [pageUrl, list] of Object.entries(window.guideCache)) {
+    for (const item of list) {
+      if (item.type === "開啟全域表單" && item.targetUrl === targetUrl) {
+        return { parentPageUrl: pageUrl, item };
+      }
+    }
+  }
+  return null;
+}
+
+
+function findEmbedParentPageByTargetUrl(targetUrl) {
+  if (!window.guideCache) return null;
+
+  for (const [parentPageUrl, list] of Object.entries(window.guideCache)) {
+    for (const item of list) {
+      if (item.type === "嵌入導覽" && item.targetUrl === targetUrl) {
+        return {
+          parentPageUrl,     // 真正的主頁
+          parentItem: item   // 該嵌入導覽設定行
+        };
+      }
+    }
+  }
+  return null;
+}
+
+
+/* ============================================================
+   💡 顯示「返回原說明」提示 Tooltip（簡化版：只顯示按鈕）
+============================================================ */
+function showReturnTooltip(target, sourceId) {
+  focusHotspot(target);
+
+  if (!sourceId && window._lastHotspotId) {
+    sourceId = window._lastHotspotId;
+  }
+
+  const returnHTML = `
+    <div class="p-2 text-center small">
+      <a href="#" 
+        class="fw-bold text-decoration-underline text-primary return-btn"
+        style="cursor:pointer;"
+        data-source="${sourceId}">
+        返回
+      </a>
+    </div>
+  `;
+
+  if (window._returnTippy) {
+    try { window._returnTippy.hide(); window._returnTippy.destroy(); } catch(e){}
+    window._returnTippy = null;
+  }
+
+  const tip = tippy(target, {
+    content: returnHTML,
+    allowHTML: true,
+    trigger: 'manual',
+    theme: 'light-border',
+    interactive: true,
+    appendTo: document.body,
+    placement: 'auto',
+    maxWidth: 'none',
+    onHidden(instance) {
+      instance.destroy();   // ⬅ 安全銷毀在這裡
+    }
+  });
+
+
+  // 顯示返回 tooltip
+  requestAnimationFrame(() => {
+    if (target._tippy) {
+      target._tippy.show();
+      window._returnTippy = target._tippy;
+
+      // ⭐ 綁定返回按鈕事件
+      const btn = target._tippy.popper.querySelector(".return-btn");
+      if (btn) {
+        btn.addEventListener("click", e => {
+          e.preventDefault();      // ❗ 不要跳 hash
+          e.stopPropagation();     // ❗ 不要讓 Tippy 當成點外面
+          const src = btn.dataset.source;
+          returnToLastTooltip(src);
+        });
+      }
+    }
+  });
+
+
+}
+
+/* ============================================================
+   🧹 全域暴力清除浮層
+   ============================================================ */
+function nukeAllOverlays() {
+  // 刪掉所有全域表單 overlay
+  document.querySelectorAll('#globalFormOverlay').forEach(el => el.remove());
+
+  // 刪掉所有一般表單 overlay
+  if (window.activeFormOverlays) {
+    Object.values(window.activeFormOverlays).forEach(list =>
+      list.forEach(el => el.remove())
+    );
+    window.activeFormOverlays = {};
+  }
+
+  // 刪掉所有 tippy tooltip
+  document.querySelectorAll('[data-tippy-root]').forEach(el => el.remove());
+
+  // 恢復底層互動
+  document.querySelectorAll('#hotspotContainer .hotspot').forEach(h => {
+    h.style.pointerEvents = 'auto';
+    h.style.opacity = '1';
+  });
+
+  // 恢復捲動
+  const content = document.getElementById('content');
+  if (content) content.style.overflowY = 'scroll';
+}
+
+/* ============================================================
+   🔙 返回原 Tooltip（模擬原始點擊，還原原邏輯）
+============================================================ */
+function returnToLastTooltip(sourceId) {
+  try {
+
+    nukeAllOverlays();
+
+    // ===============================================
+    // ⭐ A. 若是從嵌入導覽跳出 → 先回到嵌入導覽
+    // ===============================================
+    if (window.__returnFromEmbed) {
+        const info = window.__returnFromEmbed;
+        delete window.__returnFromEmbed;
+
+        console.log("⬅️ [返回嵌入導覽]：", info);
+
+        // 1. 嘗試找出父頁（依 hotspotId 判斷在哪一頁）
+        let parentPageUrl = null;
+        for (const [pageUrl, list] of Object.entries(guideCache)) {
+            for (const it of list) {
+                const id = (it.pagePath + "_" + it.title);
+                if (id === info.parentHotspotId) {
+                    parentPageUrl = pageUrl;
+                    break;
+                }
+            }
+            if (parentPageUrl) break;
+        }
+
+        // 2. 切到該頁
+        if (parentPageUrl) {
+            switchPage(parentPageUrl);
+
+            const obs = new MutationObserver(() => {
+                const embedEl = document.querySelector(`[data-hotspot-id="${info.parentHotspotId}"]`);
+                if (embedEl) {
+                    obs.disconnect();
+
+                    // 3. 找到嵌入導覽的卷軸容器
+                    const frame = embedEl.querySelector(':scope > div');
+                    if (frame) {
+                        frame.scrollTop = info.scrollTop;
+                    }
+
+                    // 4. 回到來源 tooltip
+                    const srcEl = document.querySelector(`[data-hotspot-id="${sourceId}"]`);
+                    if (srcEl) {
+                      focusHotspot(srcEl);
+                      simulateHotspotClick(srcEl);
+                      recordHighlightReturn(sourceId, srcEl);
+                    } else {
+                        // 如果來源不在同頁 → 自動找所有頁
+                        for (const [pageUrl2, list2] of Object.entries(guideCache)) {
+                            for (const it2 of list2) {
+                                const id2 = (it2.pagePath + "_" + it2.title);
+                                if (id2 === sourceId) {
+                                    switchPage(pageUrl2);
+
+                                    const obs2 = new MutationObserver(() => {
+                                        const newEl = document.querySelector(`[data-hotspot-id="${sourceId}"]`);
+                                        if (newEl) {
+                                            obs2.disconnect();
+                                            focusHotspot(newEl);
+                                            simulateHotspotClick(newEl);
+                                            recordHighlightReturn(sourceId, newEl);
+                                        }
+                                    });
+                                    obs2.observe(document.getElementById("hotspotContainer"), {
+                                        childList: true,
+                                        subtree: true
+                                    });
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            obs.observe(document.getElementById("hotspotContainer"), {
+                childList: true,
+                subtree: true
+            });
+
+            return;  // ⚠️ 嵌入導覽返回處理完，不要往下跑
+        }
+    }
+
+    if (!sourceId) {
+      console.warn("⚠️ returnToLastTooltip: sourceId 不存在");
+      return;
+    }
+
+    // ====================================
+    // ① 關閉「返回」提示
+    // ====================================
+    if (window._returnTippy) {
+      const tmp = window._returnTippy;
+      window._returnTippy = null;
+
+      const popper = tmp.popper;
+      if (popper) popper.style.opacity = "0";  // ⭐ 讓返回 tooltip 隱形
+
+      tmp.hide();
+
+      setTimeout(() => {
+        if (popper) popper.style.opacity = "";
+        tmp.destroy();
+      }, 300);
+    }
+
+    // ====================================
+    // ② 若有全域表單 → 先關閉全域表單
+    // ====================================
+    closeGlobalFormOverlay();
+    
+    // ====================================
+    // ③ 一般表單浮層也要一起處理（巢狀表單）
+    // ====================================
+    if (window.activeFormOverlays) {
+      Object.keys(window.activeFormOverlays).forEach(key => {
+        window.activeFormOverlays[key].forEach(el => el.remove());
+      });
+      window.activeFormOverlays = {};
+    }
+
+    // 恢復底層熱區互動
+    document.querySelectorAll("#hotspotContainer .hotspot").forEach(h => {
+      h.style.pointerEvents = "auto";
+      h.style.opacity = "1";
+    });
+    const content = document.getElementById("content");
+    if (content) content.style.overflowY = "scroll";
+
+    // ====================================
+    // ④ 關閉所有 tooltip
+    // ====================================
+    closeAllTippies();
+
+    // ====================================
+    // ⑤ 嘗試在當前頁找到來源熱區
+    // ====================================
+    let el = document.querySelector(`[data-hotspot-id="${sourceId}"]`);
+    if (!el && typeof guideCache === "object") {
+
+      // ====================================
+      // ⑥ 不在當前頁 → 自動跨頁切換
+      // ====================================
+      for (const [pageUrl, list] of Object.entries(guideCache)) {
+
+        const found = list.find(it => {
+          const id = (it.pagePath + "_" + it.title)
+            ;
+          return id === sourceId;
+        });
+
+        if (found) {
+          console.log("🌍 返回跨頁 →", pageUrl);
+
+          switchPage(pageUrl);
+
+          const obs = new MutationObserver(() => {
+            const newEl = document.querySelector(
+              `[data-hotspot-id="${sourceId}"]`
+            );
+
+            if (newEl) {
+              obs.disconnect();
+              focusHotspot(newEl);
+              simulateHotspotClick(newEl);
+              recordHighlightReturn(sourceId, newEl);
+            }
+          });
+          obs.observe(document.getElementById("hotspotContainer"), {
+            childList: true,
+            subtree: true
+          });
+
+          return;
+        }
+      }
+    }
+
+    // ====================================
+    // ⑦ 當頁找到來源熱區 → 打開 tooltip
+    // ====================================
+    if (el) {
+      focusHotspot(el);
+      simulateHotspotClick(el);
+      recordHighlightReturn(sourceId, el);
+
+      // 視覺亮光效果
+      el.style.transition = "box-shadow 0.3s";
+      el.style.boxShadow = "0 0 25px 5px rgba(255,200,0,0.9)";
+      setTimeout(() => (el.style.boxShadow = ""), 800);
+    }
+
+  } catch (err) {
+    console.error("❌ returnToLastTooltip 錯誤:", err);
+  }
+}
+
+
+
+/* ============================================================
+   🖱️ 模擬熱區點擊（保持行為一致）
+============================================================ */
+function simulateHotspotClick(el) {
+  if (!el) return;
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (el._tippy) {
+        el._tippy.show();
+      } else {
+        const evt = new MouseEvent("click", { bubbles: true, cancelable: true, view: window });
+        el.dispatchEvent(evt);
+      }
+    });
+  });
+}
+
+
+// ============================================================
+// 🧩 共用：統一產生可點擊的橘色 Tag 標籤 HTML
+// ============================================================
+function buildTagHTML(tags) {
+  if (!tags || !tags.length) return "";
+
+  return `
+    <div class="mt-2 text-center small">
+      ${tags.map(t => `
+        <a href="#"
+           class="tag-click text-warning guide-tag-link"
+           data-tag="${t}">
+           #${t}
+        </a>
+      `).join("")}
+    </div>
+  `;
+}
+
+// ===========================================
+// 🔗 點擊 tooltip 裡的標籤 → 在左側顯示提示方塊
+// ===========================================
+// 🔥 永遠最早捕捉點擊來源（包含 Tippy 內容）
+document.addEventListener('mousedown', e => {
+  window._lastClickedElement = e.target;
+}, true); // ← useCapture = true，保證最先觸發
+
+document.addEventListener("click", function (e) {
+  const tagEl = e.target.closest(".tag-click");
+  if (!tagEl) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  const tag = tagEl.dataset.tag;
+  const resultBox = document.getElementById("searchResults");
+
+  if (!resultBox) return;
+
+  // 🟠 清空搜尋框，避免混淆
+  const input = document.getElementById("searchInput");
+  if (input) input.value = "#" + tag;
+
+  // 🟢 使用你已有的標籤搜尋函式
+  if (typeof showTagSearchResults === "function") {
+    showTagSearchResults(tag);
+  }
+});
+
+  </script>
+</body>
+
+</html>
