@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>追管系統互動式導覽</title>
+
+  <!-- 🔹 Bootstrap & Tippy.js -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://unpkg.com/@popperjs/core@2"></script>
+  <script src="https://unpkg.com/tippy.js@6"></script>
+
+  <style>
+    body {
+      font-family: "Microsoft JhengHei", sans-serif;
+      background-color: #f8f9fa;
+    }
+
+    /* 🔸 載入進度條置中 */
+    #loadingContainer {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      z-index: 1000;
+    }
+
+    /* 🔸 進度條樣式 */
+    .progress {
+      width: 80%;
+      max-width: 900px;
+      min-width: 300px;
+      height: 22px;
+      margin: 0 auto;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- 🟡 載入畫面 -->
+  <div id="loadingContainer">
+    <div class="progress">
+      <div id="loadProgress" class="progress-bar progress-bar-striped progress-bar-animated bg-warning"></div>
+    </div>
+    <div id="loadStatus" class="mt-2 text-muted">系統初始化中...</div>
+  </div>
+
+  <!-- 🟧 通關 Modal（不允許點外面關閉） -->
+  <div class="modal fade" id="gateModal" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content" style="border-radius:12px; border:2px solid #ffa500;">
+        <div class="modal-header bg-warning text-dark" style="border-bottom:2px solid #ffa500;">
+          <h5 class="modal-title fw-bold">通關問題</h5>
+        </div>
+
+        <div class="modal-body text-center p-4">
+          <div id="gateQuestion" class="fw-bold mb-3" style="font-size:18px;"></div>
+          <input id="gateAnswer" type="text" class="form-control mb-3" placeholder="請輸入答案">
+          <div id="gateError" class="text-danger small" style="display:none;">答案錯誤，請再試一次！</div>
+        </div>
+
+        <div class="modal-footer justify-content-center">
+          <button id="gateSubmit" class="btn btn-warning px-4 fw-bold">確定</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🟢 主內容容器 -->
+  <div id="mainContainer" class="container-fluid mt-3" style="display:none;">
+    <?!= include('guidePage'); ?>
+  </div>
+
+  <script>
+
+    // ==============================
+    // 🧠 全域控制
+    // ==============================
+    document.addEventListener("DOMContentLoaded", () => {
+      updateProgress(25, "載入導覽資料中...");
+
+      google.script.run
+        .withSuccessHandler(data => {
+
+          window.guideData = data;
+
+          // 🔥 先遮罩整個 UI（包含左側收放按鈕）
+          hideAllUIBeforeGate();
+
+          updateProgress(100, "完成！");
+
+          // 🔥 開啟通關頁（只呼叫一次）
+          startGatePage(data.settings);
+
+          // 🔥 loading 消失（主內容仍然保持隱藏，直到通關成功）
+          setTimeout(() => {
+            document.getElementById("loadingContainer").style.display = "none";
+          }, 600);
+        })
+        .withFailureHandler(err => {
+          updateProgress(100, "❌ 載入失敗：" + err.message);
+          console.error(err);
+        })
+        .getGuideData();
+    });
+
+    // ==============================
+    // 📊 進度條控制
+    // ==============================
+    function updateProgress(val, text) {
+      const bar = document.getElementById("loadProgress");
+      bar.style.width = val + "%";
+      document.getElementById("loadStatus").innerText = text || "";
+    }
+
+    // ==============================
+    // 📊 通關密語
+    // ==============================
+    function startGatePage(settings) {
+      let questions = settings["通關問題"] || [];
+      let answers   = settings["通關答案"] || [];
+      const devKeys = (settings["開發者密語"] || [])
+        .map(s => s.trim())
+        .filter(s => s !== "");   // ← 🔥 多這行，就能防止空輸入觸發開發者模式
+
+
+      // 🔥 找出「兩邊都有值」的欄位（確保題目與答案同步）
+      let validIndexes = [];
+      for (let i = 0; i < questions.length; i++) {
+        if (questions[i] && answers[i]) {
+          validIndexes.push(i);
+        }
+      }
+
+      // 🚨 完全沒題目 → 直接略過 gate
+      if (validIndexes.length === 0) {
+        showMainUIAll();
+        initGuidePage(window.guideData);
+        return;
+      }
+
+      // 🔥 從有效欄位隨機抽
+      const idx = validIndexes[Math.floor(Math.random() * validIndexes.length)];
+
+      const question = questions[idx];
+      const answer   = answers[idx];
+
+      // 顯示題目
+      document.getElementById("gateQuestion").textContent = question;
+
+      const modal = new bootstrap.Modal(document.getElementById("gateModal"));
+      modal.show();
+
+      document.getElementById("gateSubmit").onclick = () => {
+        const input = document.getElementById("gateAnswer").value.trim();
+
+        // === 🟣 開發者密語 ===
+        if (devKeys.includes(input)) {
+          enableAllTools();
+          modal.hide();
+          showMainUIAll();
+          initGuidePage(window.guideData);
+          return;
+        }
+
+        // === 🟡 一般驗證 ===
+        if (input === answer) {
+          hideToolsForNormalUser();
+          modal.hide();
+          showMainUIAll();
+          initGuidePage(window.guideData);
+        } else {
+          document.getElementById("gateError").style.display = "block";
+        }
+      };
+    }
+
+    //隱藏UI
+    function hideAllUIBeforeGate() {
+      const hide = id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = "none";
+      };
+
+      hide("sidebar");
+      hide("sidebarToggleTab"); 
+      hide("content");
+      hide("titleOverlayWrapper");
+      hide("mainContainer");
+
+      const img = document.getElementById("guideImage");
+      if (img) img.style.display = "none";
+    }
+
+    // === 顯示UI ===
+    function showMainUIAll() {
+      const show = id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = "";
+      };
+
+      show("sidebar");
+      show("sidebarToggleTab");  
+      show("content");
+      show("titleOverlayWrapper");
+      show("mainContainer");
+
+      const img = document.getElementById("guideImage");
+      if (img) img.style.display = "";
+    }
+
+    // === 依據用戶顯示工具面板 ===
+    function hideToolsForNormalUser() {
+      [
+        "markToolBlock",
+        "coordBlock",
+        "hotspotIdBlock"
+      ].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = "none";
+      });
+    }
+
+    function enableAllTools() {
+      [
+        "markToolBlock",
+        "coordBlock",
+        "hotspotIdBlock"
+      ].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = "";
+      });
+    }
+
+  </script>
+</body>
+</html>
